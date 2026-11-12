@@ -41,7 +41,7 @@ let UPDATED_AT = "";
 let TOTAL = 0;           // server-side total for the current filter
 let PAGES = 1, PAGE = 1;
 const filter = {cat:"all", date:"all", q:""};
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 20;
 
 /* ---------- theme ---------- */
 function setLogo(){

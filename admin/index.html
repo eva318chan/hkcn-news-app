@@ -278,15 +278,17 @@
   $("prevBtn").addEventListener("click", function(){ if (state.page > 1){ state.page--; loadList(); } });
   $("nextBtn").addEventListener("click", function(){ if (state.page < state.pages){ state.page++; loadList(); } });
 
-  // Logout is client-side: the session is a stateless HMAC cookie, so
-  // expiring it is enough. Setting a cookie with the same name + Path
-  // overwrites the HttpOnly session cookie (cookie name must match
-  // COOKIE in lib/admin-auth.js), then Max-Age=0 deletes it. No server
-  // endpoint is needed, which also keeps us under Vercel's 12-function
+  // Logout is server-side: the session cookie is HttpOnly, so JavaScript
+  // cannot clear it (the old document.cookie line never worked — the
+  // session stayed valid until expiry). POST { action: "logout" } to the
+  // auth callback and the server expires the cookie, then reload to the
+  // sign-in screen. No new function is needed — the existing callback
+  // endpoint handles logout, keeping us under Vercel's 12-function
   // Hobby limit.
   $("logoutBtn").addEventListener("click", function(){
-    document.cookie = "hkcn_admin_session=; Max-Age=0; Path=/; SameSite=Lax; Secure";
-    location.reload();
+    api("/api/admin/auth/callback", { method: "POST", body: JSON.stringify({ action: "logout" }) })
+      .then(function(){ location.reload(); })
+      .catch(function(e){ showMsg("登出失敗：" + e.message, true); });
   });
 
   $("migrateBtn").addEventListener("click", function(){

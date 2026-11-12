@@ -1,5 +1,7 @@
 // POST /api/admin/auth/callback — Google Sign-In exchange.
 //   Body: { credential } — the Google ID token from Google Identity Services.
+//   Body: { action: "logout" } — expires the session cookie server-side
+//     (the cookie is HttpOnly, so the browser cannot clear it itself).
 //   Verifies the token with Google (tokeninfo), checks the audience is this
 //   app's GOOGLE_CLIENT_ID, the email is verified, and the email is on the
 //   ADMIN_EMAILS allowlist. On success sets a signed httpOnly session cookie.
@@ -7,7 +9,7 @@
 //   invalid token or an email that is not allowlisted. The token is never
 //   logged or stored.
 "use strict";
-const { googleClientId, adminEmails, adminConfigured, sessionCookieHeader } = require("../../../lib/admin-auth");
+const { googleClientId, adminEmails, adminConfigured, sessionCookieHeader, clearCookieHeader } = require("../../../lib/admin-auth");
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -35,6 +37,16 @@ module.exports = async (req, res) => {
   let body;
   try { body = await readBody(req); }
   catch (e) { res.status(400).json({ ok: false, error: "invalid JSON body" }); return; }
+  // Logout: POST { action: "logout" } clears the HttpOnly session cookie
+  // server-side — JavaScript cannot touch an HttpOnly cookie, so the old
+  // client-side document.cookie clear never worked. Handled before the
+  // adminConfigured check so a stale session can always be cleared, even
+  // if the env vars are misconfigured. No new function needed.
+  if (body && body.action === "logout") {
+    res.setHeader("Set-Cookie", clearCookieHeader());
+    res.status(200).json({ ok: true, loggedOut: true });
+    return;
+  }
   const credential = (body.credential || "").trim();
   if (!credential) { res.status(400).json({ ok: false, error: "missing credential" }); return; }
 

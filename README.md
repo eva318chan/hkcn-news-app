@@ -56,6 +56,7 @@ When the env vars appear, the app switches automatically. Nothing else changes.
 | `SUPABASE_SERVICE_KEY` | for live DB + ingest | service_role key — **server-side only, never in the browser or repo** |
 | `R2_PUBLIC_BASE_URL` | for live images | `https://images.hkcnexpress.com` |
 | `INGEST_SECRET` | for publishing | long random string; same value in the Bella pipeline |
+| `GEMINI_API_KEY` | for batch images | Gemini API key — server-side only, never in the browser or repo. The batch endpoint reads it from env; if it is missing, Generate fails with a clear message telling the admin to set it in Vercel |
 | `GOOGLE_CLIENT_ID` | for admin sign-in | Google OAuth client id (public id, not a secret); the OAuth client must allow the origin `https://hkcn-news-app-eva318chan.vercel.app` and the callback `/api/admin/auth/callback` |
 | `ADMIN_EMAILS` | for admin sign-in | comma-separated allowlist of Google accounts allowed into `/admin/` (e.g. `eddiehlk@gmail.com,eva318.chan@gmail.com`) |
 | `ADMIN_SESSION_SECRET` | for admin sign-in | long random string; HMAC key for the admin session cookie — server-side only, never in the browser or repo |
@@ -121,12 +122,49 @@ data; `/api/admin/articles` returns 401).
 mode filters drafts too), so setting an article to `draft` unpublishes it
 everywhere at once.
 
+**Batch images (POC, 2026-11-13).** The admin page has a "Batch images"
+section that generates AI design images with the Gemini Batch API — the
+only image-generation path now. Step 5D (immediate Gemini image generation
+in the pipeline) is PAUSED (user decision 2026-11-13); the pipeline only
+prepares a Chinese prompt per SOP for each new imageless article (step 5E)
+and stores it in `image_prompt`. Nothing auto-generates, auto-checks or
+auto-publishes: the admin selects articles, clicks Generate, clicks Check,
+reviews the images and approves — the user controls every step.
+
+Flow: article list (date range, default today; "without image" default;
+each row is checkbox + category + title + editable `image_prompt` textarea
+— edits save on blur via the existing articles PATCH) → Generate shows a
+model picker beside it (Lite / Flash Image / Pro Image, each with its batch
+price) → a second click submits the batch (max 10 articles; the endpoint
+rejects more than 10) → the BatchID list shows each batch with a Check
+button → Check downloads the results to R2 staging
+(`staging/design/<batch-id>/<slug>.jpg`) → the review list shows each
+generated image with its news title and Approve / Reject buttons →
+Approve copies the image to `design/<YYYYMM>/<slug>.jpg` in R2 and links
+it to the article (`image_url` + `image_r2_key`); Reject deletes the
+staging copy. The usage-stats area shows per-model images generated so
+far + cost so far (generated × batch price) + total.
+
+One endpoint, `POST /api/admin/batch` (Google SSO only, no
+`INGEST_SECRET`), with an `action` field: `list-articles`, `create`,
+`check`, `approve`, `reject`, `list-batches`, `list-items`, `stats`.
+Batch price is half of standard (verified 2026-11-13: Lite ~$0.017, Flash
+1K ~$0.034, Pro 1K/2K ~$0.067 per image). Prices live in
+`gemini_model_prices` (check weekly; a model with an unknown price is
+shown as "待確認", never guessed); the endpoint falls back to the verified
+prices above when the table is empty. DB tables
+(`sql/001-batch-tables.sql` — run once in the Supabase SQL Editor, it is
+idempotent): `image_batches`, `image_batch_items`, `gemini_model_prices`.
+This endpoint is the 12th and last serverless function (Hobby limit 12) —
+no further endpoint can be added without merging or removing one.
+
 **R2 migration (done 2026-11-13, endpoint removed).** The 5 AI design images
 were uploaded to the `hkcn-news-images` bucket (`design/202611/<file>`) via
 the admin migrate button, and the articles now serve them from the R2 public
 URL. The button and its `POST /api/admin/r2-migrate` endpoint were removed
-afterwards — the endpoint only handled those 5 files, and removing it frees
-a serverless-function slot (now 10/12). New design images from the pipeline
+afterwards — the endpoint only handled those 5 files, and removing it freed
+a serverless-function slot (at the time; the app is now at 12/12 — see Batch
+images above). New design images from the pipeline
 go through the permanent `POST /api/ingest-image` endpoint instead (see
 Publishing below), so no further backfill is needed for new articles.
 
@@ -271,11 +309,12 @@ INGEST_SECRET=test-secret node scripts/serve.mjs 3100
 | `index.html`, `assets/style.css`, `assets/logo-*.png`, `assets/favicon.png` | copied verbatim from the live repo |
 | `assets/app.js` | live `app.js` with only the data loading changed (diff it: theme/i18n/render/share code is identical) |
 | `lib/data.js` | the data seam (seed ↔ Supabase, R2 ↔ local images) |
-| `api/*.js` | Vercel serverless functions (no dependencies, no framework). 11 functions — shared code lives in root `lib/`, NOT under `api/`, or Vercel would count it as a function (Hobby limit is 12 per deployment) |
+| `api/*.js` | Vercel serverless functions (no dependencies, no framework). 12 functions — the Hobby limit is 12 per deployment, so this is FULL; no further endpoint can be added without merging or removing one. Shared code lives in root `lib/`, NOT under `api/`, or Vercel would count it as a function |
 | `admin/index.html` | admin UI (Google SSO; calls `/api/admin/*`) |
 | `lib/admin-auth.js` | shared Google SSO session check for all `/api/admin/` routes |
 | `api/admin/config.js`, `api/admin/auth/callback.js` | admin sign-in: client-id config, ID-token exchange (logout is a branch of the callback — server-side cookie expiry) |
 | `api/admin/articles.js` | admin article list / get / create / edit / delete |
+| `api/admin/batch.js` | Gemini Batch API image generation (POC): create / check / approve / reject / list-batches / list-items / stats, all behind one `action` field — the 12th function |
 | `data/seed.json`, `data/seed-meta.json` | migration snapshot (regenerate with `scripts/migrate.mjs`) |
 | `design/202611/*.jpg` | the 5 design images in R2 layout |
 | `scripts/migrate.mjs`, `scripts/serve.mjs` | migration + local dev server |

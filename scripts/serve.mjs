@@ -34,7 +34,7 @@ const handlers = {
   "/api/admin/config": loadHandler("admin/config.js"),
   "/api/admin/auth/callback": loadHandler("admin/auth/callback.js"),
   "/api/admin/articles": loadHandler("admin/articles.js"),
-  "/api/admin/r2-migrate": loadHandler("admin/r2-migrate.js"),
+  "/api/admin/batch": loadHandler("admin/batch.js"),
 };
 
 function makeRes(nodeRes) {

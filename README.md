@@ -20,6 +20,8 @@ Reader → Vercel (hkcn-news-app)
   ├── api/meta.js                      dates + counts (replaces data/manifest.json)
   ├── api/sitemap.xml.js / rss.xml.js  generated live from the store
   ├── api/ingest.js                    POST with x-ingest-secret — the pipeline write path
+  ├── api/ingest-image.js              POST with x-ingest-secret — pipeline image upload to R2
+  ├── lib/r2.js                        SigV4 S3 PUT helper (shared by ingest-image)
   ├── admin/index.html                 admin UI (Google SSO, see below)
   └── api/admin/*                      admin API (all routes require the Google SSO session)
         ├── Supabase Postgres (articles table) — DATABASE ONLY
@@ -125,7 +127,8 @@ the admin migrate button, and the articles now serve them from the R2 public
 URL. The button and its `POST /api/admin/r2-migrate` endpoint were removed
 afterwards — the endpoint only handled those 5 files, and removing it frees
 a serverless-function slot (now 10/12). New design images from the pipeline
-are logged as "待 R2 backfill" and will need a future backfill route.
+go through the permanent `POST /api/ingest-image` endpoint instead (see
+Publishing below), so no further backfill is needed for new articles.
 
 **Logout is server-side, not an endpoint of its own.** The session cookie is
 HttpOnly, so JavaScript cannot clear it — the old `document.cookie` clear
@@ -183,6 +186,21 @@ Each 2-hour pipeline run: search → rewrite → generate AI design image if nee
 No Git commit, no Vercel deployment. `POST`ing the same `id` again updates the
 article (dedupe by `(site, slug)`). `DELETE /api/ingest?slug=<id>` (same secret)
 removes one article.
+
+**Image upload (`POST /api/ingest-image`, same `x-ingest-secret` auth as
+`/api/ingest`).** The pipeline's route for design images into R2 — the cron
+cannot hold a Google SSO session, so admin endpoints are unusable by it, and
+the R2 credentials are only readable by serverless functions at runtime.
+Body: `{ key, sourceUrl }` (the function fetches the image and PUTs it to R2)
+or `{ key, contentBase64, contentType }` (direct upload). The key must match
+`^design/YYYYMM/<name>.(jpg|jpeg|png|webp)$` — anything else is rejected
+with 400. Response: `{ ok:true, key, url, bytes }` where `url` is
+`R2_PUBLIC_BASE_URL + "/" + key`; the article is then ingested with
+`image_url` = that URL and `image_r2_key` = the key. Uploads are idempotent,
+so re-uploading the same key is safe. If the upload fails, the pipeline keeps
+the old behaviour (image served from the old site's live URL, logged as
+"待 R2 backfill") and never blocks publishing on it. Signing is SigV4
+(`lib/r2.js`, Node built-in crypto, no SDK).
 
 ## Migration
 
@@ -253,7 +271,7 @@ INGEST_SECRET=test-secret node scripts/serve.mjs 3100
 | `index.html`, `assets/style.css`, `assets/logo-*.png`, `assets/favicon.png` | copied verbatim from the live repo |
 | `assets/app.js` | live `app.js` with only the data loading changed (diff it: theme/i18n/render/share code is identical) |
 | `lib/data.js` | the data seam (seed ↔ Supabase, R2 ↔ local images) |
-| `api/*.js` | Vercel serverless functions (no dependencies, no framework). 10 functions — shared code lives in root `lib/`, NOT under `api/`, or Vercel would count it as a function (Hobby limit is 12 per deployment) |
+| `api/*.js` | Vercel serverless functions (no dependencies, no framework). 11 functions — shared code lives in root `lib/`, NOT under `api/`, or Vercel would count it as a function (Hobby limit is 12 per deployment) |
 | `admin/index.html` | admin UI (Google SSO; calls `/api/admin/*`) |
 | `lib/admin-auth.js` | shared Google SSO session check for all `/api/admin/` routes |
 | `api/admin/config.js`, `api/admin/auth/callback.js` | admin sign-in: client-id config, ID-token exchange (logout is a branch of the callback — server-side cookie expiry) |

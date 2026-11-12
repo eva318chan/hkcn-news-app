@@ -129,6 +129,14 @@ async function sbFetchPage(path, params, limit, offset) {
       Prefer: "count=exact",
     },
   });
+  if (r.status === 416) {
+    // Offset past the end of the filtered set (e.g. the last image_first
+    // page asks the with-image partition for offset 2300 of 1184 rows):
+    // PostgREST refuses the range instead of returning an empty page.
+    // Return the empty page with the true total from a limit=0 probe.
+    const probe = await sbFetchPage(path, params, 0, 0);
+    return { rows: [], total: probe.total };
+  }
   if (!r.ok) throw new Error(`Supabase ${r.status}: ${(await r.text()).slice(0, 300)}`);
   const rows = await r.json();
   const m = (r.headers.get("content-range") || "").match(/\/(\d+)$/);

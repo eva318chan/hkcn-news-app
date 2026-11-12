@@ -2,9 +2,14 @@
 //   Headers: x-ingest-secret: <INGEST_SECRET env var>
 //   Body (one article, same shape as the old data/*.json entries):
 //     { id, category, published_at, source:{name,url}, image_url,
-//       image_r2_key?, image_caption?, footer_note?,
+//       image_r2_key?, image_caption?, footer_note?, image_prompt?,
 //       title:{en,zh_hant,zh_hans}, summary:{en,zh_hant,zh_hans},
 //       tags:{en,zh_hant,zh_hans} }
+//   image_prompt is the exact Gemini prompt used to generate the article's
+//   AI design image (migration 002). It is stored in articles.image_prompt;
+//   null/absent for real photos, hotlinks and pre-migration articles. The
+//   POST response echoes the value actually stored, so the pipeline can
+//   verify the prompt round-tripped to the DB.
 //   Dedupes by (site, slug): re-posting the same id updates it, never duplicates.
 //   DELETE /api/ingest?slug=<id> — removes one article (same secret; used to
 //   clean up test inserts).
@@ -43,6 +48,10 @@ function toDbRow(a) {
     image_r2_key: a.image_r2_key || null,
     image_caption: a.image_caption || null,
     footer_note: a.footer_note || null,
+    // Only sent when a prompt is supplied: the column is added by migration
+    // 002, and sending the key before 002 is applied would fail the upsert.
+    // Absent prompt => the column keeps its default (null).
+    ...(a.image_prompt ? { image_prompt: a.image_prompt } : {}),
     title_en: a.title?.en || "",
     title_zh_hant: a.title?.zh_hant || "",
     title_zh_hans: a.title?.zh_hans || "",
@@ -116,7 +125,17 @@ module.exports = async (req, res) => {
       res.status(502).json({ ok: false, error: `database error ${r.status}: ${(await r.text()).slice(0, 200)}` });
       return;
     }
-    res.status(200).json({ ok: true, slug: body.id, url: `/a/${body.id}.html` });
+    // Confirm what is actually stored, not just what was sent — the
+    // pipeline uses this to verify image_prompt round-tripped to the DB.
+    let storedPrompt = null;
+    try {
+      const vr = await fetch(`${sbUrl}/rest/v1/articles?select=image_prompt&site=eq.${SITE}&slug=eq.${encodeURIComponent(body.id)}&limit=1`, { headers });
+      if (vr.ok) {
+        const vrows = await vr.json();
+        if (Array.isArray(vrows) && vrows.length) storedPrompt = vrows[0].image_prompt ?? null;
+      }
+    } catch (e) { /* read-back failed — the insert itself already succeeded */ }
+    res.status(200).json({ ok: true, slug: body.id, url: `/a/${body.id}.html`, image_prompt: storedPrompt });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
   }

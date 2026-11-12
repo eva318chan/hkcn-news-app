@@ -17,6 +17,15 @@ const LIVE = "https://raw.githubusercontent.com/eva318chan/hkcn-news/main";
 const SITE = "hkcn";
 const CONCURRENCY = 15;
 
+// Slug renames the user approved (old slug -> new slug). The ingest id regex
+// rejects dots, so the dotted slug is renamed here and a future re-seed posts
+// the new slug. "3-5" keeps the meaning "3.5-year high"; "35" would wrongly
+// read as a 35-year high. The old URL /a/20260930-yuan-fixing-3.5-year-high.html
+// 404s on the new app — accepted by the user.
+const SLUG_RENAMES = {
+  "20260930-yuan-fixing-3.5-year-high": "20260930-yuan-fixing-3-5-year-high",
+};
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function fetchText(url, tries = 3) {
@@ -101,7 +110,7 @@ async function main() {
   const seed = rows.map((a) => {
     const out = {
       site: SITE,
-      id: a.id,
+      id: SLUG_RENAMES[a.id] || a.id,
       category: a.category,
       published_at: a.published_at,
       source: a.source || { name: "", url: "" },
@@ -114,6 +123,7 @@ async function main() {
     if (a.image_caption) out.image_caption = a.image_caption;
     if (a.footer_note) out.footer_note = a.footer_note;
     if (a.image_r2_key) out.image_r2_key = a.image_r2_key;
+    if (a.image_prompt) out.image_prompt = a.image_prompt;
     return out;
   });
 
@@ -176,6 +186,10 @@ function toDbRow(a) {
     source_name: srcName, source_url: srcUrl,
     image_url: a.image_url || null, image_r2_key: a.image_r2_key || null,
     image_caption: a.image_caption || null, footer_note: a.footer_note || null,
+    // Only sent when a prompt is supplied: the column is added by migration
+    // 002, and sending the key before 002 is applied would fail the upsert.
+    // Absent prompt => the column keeps its default (null).
+    ...(a.image_prompt ? { image_prompt: a.image_prompt } : {}),
     title_en: a.title?.en || "", title_zh_hant: a.title?.zh_hant || "", title_zh_hans: a.title?.zh_hans || "",
     summary_en: a.summary?.en || "", summary_zh_hant: a.summary?.zh_hant || "", summary_zh_hans: a.summary?.zh_hans || "",
     tags_en: a.tags?.en || [], tags_zh_hant: a.tags?.zh_hant || [], tags_zh_hans: a.tags?.zh_hans || [],

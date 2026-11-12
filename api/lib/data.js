@@ -85,9 +85,40 @@ async function sbFetch(path) {
   return r.json();
 }
 
+// PostgREST caps a single response at 1000 rows (server max-rows), so a
+// limit=2000 request silently returns only the newest 1000 rows. Fetch in
+// pages of 1000 with limit/offset until a short page arrives, and take the
+// true total from the Content-Range header (Prefer: count=exact) instead of
+// trusting the number of rows returned.
+async function sbFetchPaged(path, params) {
+  const PAGE = 1000;
+  const rows = [];
+  let total = null;
+  for (let offset = 0; ; offset += PAGE) {
+    const p = new URLSearchParams(params);
+    p.set("limit", String(PAGE));
+    p.set("offset", String(offset));
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}?${p.toString()}`, {
+      headers: {
+        apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
+        Prefer: "count=exact",
+      },
+    });
+    if (!r.ok) throw new Error(`Supabase ${r.status}: ${(await r.text()).slice(0, 300)}`);
+    const page = await r.json();
+    const m = (r.headers.get("content-range") || "").match(/\/(\d+)$/);
+    if (m) total = parseInt(m[1], 10);
+    rows.push(...page);
+    if (page.length < PAGE) break;
+    if (total !== null && rows.length >= total) break;
+  }
+  return { rows, total: total ?? rows.length };
+}
+
 // Fetch published rows for this site, with server-side filters where PostgREST
-// can express them. Bounded (cap 2000) — final sort/pagination happens in JS
-// so seed and Supabase behave identically.
+// can express them. Fetched in pages (sbFetchPaged) so the full set comes
+// back despite PostgREST's 1000-row cap — final sort/pagination happens in
+// JS so seed and Supabase behave identically.
 async function fetchRows({ category, date, tag, q }) {
   if (!dbConfigured) {
     return loadSeed().filter((a) => a.site === SITE || !a.site);
@@ -109,9 +140,10 @@ async function fetchRows({ category, date, tag, q }) {
     const like = `*${q}*`;
     params.set("or", `(title_zh_hant.ilike.${like},title_en.ilike.${like},summary_zh_hant.ilike.${like},summary_en.ilike.${like},source_name.ilike.${like})`);
   }
-  params.set("order", "published_at.desc");
-  params.set("limit", "2000");
-  const rows = await sbFetch(`articles?${params.toString()}`);
+  // Secondary key makes page boundaries deterministic when several rows
+  // share the same published_at (JS re-sorts afterwards anyway).
+  params.set("order", "published_at.desc,slug.asc");
+  const { rows } = await sbFetchPaged("articles", params);
   return rows.map(fromDbRow);
 }
 

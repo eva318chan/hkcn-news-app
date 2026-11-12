@@ -1,0 +1,12 @@
+-- Add image_prompt to articles — run once in Supabase Dashboard → SQL Editor,
+-- after 001_articles.sql. Do NOT re-run 001 (it is already applied).
+-- Stores the exact Gemini prompt used to generate an article's AI design
+-- image. Null for real photos / hotlinked images and for articles migrated
+-- before this field existed (their prompts, where recorded, live in
+-- ~/workspace/news-image-records/LOG.md).
+-- Why: the future design may submit prompts to the Gemini Batch API in bulk
+-- to save cost. Storing the prompt per article is what makes batch possible
+-- (submit a batch of prompts, track each one, match results back to articles,
+-- retry failures). Batch job tracking (job id + per-article image status) is
+-- future work, added with the batch pipeline — not in this migration.
+alter table public.articles add column if not exists image_prompt text;

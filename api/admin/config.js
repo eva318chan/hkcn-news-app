@@ -4,7 +4,7 @@
 // env var is missing, `configured` is false and the page shows a setup note
 // instead of the sign-in button.
 "use strict";
-const { googleClientId, adminConfigured } = require("../lib/admin-auth");
+const { googleClientId, adminConfigured } = require("../../lib/admin-auth");
 
 module.exports = async (req, res) => {
   if (req.method !== "GET") {

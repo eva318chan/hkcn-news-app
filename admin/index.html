@@ -31,6 +31,14 @@
   .pager{display:flex;gap:10px;align-items:center;margin:16px 0}
 </style>
 <script>try{var _t=localStorage.getItem("hks_theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=_t;}catch(e){}</script>
+<!-- Vercel Web Analytics: window.va stub + script. This is exactly what
+     @vercel/analytics v2 inject() does in production (it loads
+     /_vercel/insights/script.js); no npm package is needed for a
+     no-build static site. -->
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
 <header class="topbar">
@@ -270,8 +278,15 @@
   $("prevBtn").addEventListener("click", function(){ if (state.page > 1){ state.page--; loadList(); } });
   $("nextBtn").addEventListener("click", function(){ if (state.page < state.pages){ state.page++; loadList(); } });
 
+  // Logout is client-side: the session is a stateless HMAC cookie, so
+  // expiring it is enough. Setting a cookie with the same name + Path
+  // overwrites the HttpOnly session cookie (cookie name must match
+  // COOKIE in lib/admin-auth.js), then Max-Age=0 deletes it. No server
+  // endpoint is needed, which also keeps us under Vercel's 12-function
+  // Hobby limit.
   $("logoutBtn").addEventListener("click", function(){
-    api("/api/admin/auth/logout", { method: "POST" }).finally(function(){ location.reload(); });
+    document.cookie = "hkcn_admin_session=; Max-Age=0; Path=/; SameSite=Lax; Secure";
+    location.reload();
   });
 
   $("migrateBtn").addEventListener("click", function(){

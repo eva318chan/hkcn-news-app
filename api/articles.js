@@ -3,7 +3,7 @@
 // gives the rule-5C order (with-image first, then imageless, newest first).
 // Same JSON shape as the old data/*.json files.
 "use strict";
-const { listArticles, setCache } = require("./lib/data");
+const { listArticles, setCache } = require("../lib/data");
 
 module.exports = async (req, res) => {
   if (req.method !== "GET") {

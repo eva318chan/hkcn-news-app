@@ -2,7 +2,7 @@
 // rebuilt by push_feeds.py on every publish). Same shape as the live sitemap:
 // homepage + one <url> per published article, lastmod = publish date.
 "use strict";
-const { listArticles, siteUrl, setCache } = require("./lib/data");
+const { listArticles, siteUrl, setCache } = require("../lib/data");
 
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 

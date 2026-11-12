@@ -1,6 +1,6 @@
 // GET /api/article?slug=<id> — one published article as JSON, or 404.
 "use strict";
-const { getArticle, setCache } = require("./lib/data");
+const { getArticle, setCache } = require("../lib/data");
 
 module.exports = async (req, res) => {
   if (req.method !== "GET") {

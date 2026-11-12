@@ -1,7 +1,7 @@
 // GET /api/meta — { updated_at, dates: [{date, count}], total, source }
 // Replaces data/manifest.json for the homepage (date chips + counts).
 "use strict";
-const { getMeta, setCache } = require("./lib/data");
+const { getMeta, setCache } = require("../lib/data");
 
 module.exports = async (req, res) => {
   if (req.method !== "GET") {

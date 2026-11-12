@@ -5,7 +5,7 @@
 // Template replicates the live static a/*.html pages: same classes, same
 // header, same language-switch script (adapted to fetch /api/article).
 "use strict";
-const { getArticle, siteUrl, setCache } = require("./lib/data");
+const { getArticle, siteUrl, setCache } = require("../lib/data");
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -107,6 +107,14 @@ ${ogImage}<meta property="og:url" content="${esc(url)}">
 <link rel="stylesheet" href="../assets/style.css">
 <script>try{var _t=localStorage.getItem("hks_theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=_t;}catch(e){}
 function logoFallback(){var b=document.getElementById("brandName");if(b)b.style.display="flex";["logoLight","logoDark"].forEach(function(id){var e=document.getElementById(id);if(e)e.style.display="none";});}</script>
+<!-- Vercel Web Analytics: window.va stub + script. This is exactly what
+     @vercel/analytics v2 inject() does in production (it loads
+     /_vercel/insights/script.js); no npm package is needed for a
+     no-build static site. -->
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
 <header class="topbar">

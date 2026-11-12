@@ -7,7 +7,7 @@
 //   invalid token or an email that is not allowlisted. The token is never
 //   logged or stored.
 "use strict";
-const { googleClientId, adminEmails, adminConfigured, sessionCookieHeader } = require("../../lib/admin-auth");
+const { googleClientId, adminEmails, adminConfigured, sessionCookieHeader } = require("../../../lib/admin-auth");
 
 function readBody(req) {
   return new Promise((resolve, reject) => {

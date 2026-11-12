@@ -36,7 +36,7 @@ is used or needed.
 
 ## Data seam (env-only switch, no code change)
 
-`api/lib/data.js` is the single seam:
+`lib/data.js` is the single seam:
 
 | | Seed mode (staging, now) | Live mode (after setup) |
 |---|---|---|
@@ -76,7 +76,7 @@ Sign-In button (Google Identity Services); the ID token is sent to
 `/api/admin/auth/callback`, which verifies it with Google, checks the email
 against `ADMIN_EMAILS`, and sets a signed httpOnly session cookie (HMAC with
 `ADMIN_SESSION_SECRET`, 7 days). Every `/api/admin/` route shares that one
-auth check (`api/lib/admin-auth.js`); unauthenticated requests get 401 and
+auth check (`lib/admin-auth.js`); unauthenticated requests get 401 and
 never see article data. If any of `GOOGLE_CLIENT_ID`, `ADMIN_EMAILS` or
 `ADMIN_SESSION_SECRET` is missing, sign-in fails closed. Sign-in is not
 testable without a real allowlisted Google account — staging verification
@@ -99,6 +99,23 @@ no SDK). Credentials come from `process.env` (`R2_ACCESS_KEY_ID`,
 `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_BUCKET`). PUTs are idempotent, so
 re-running is safe. Returns a JSON summary of keys uploaded with sizes (and
 any failures). It is a one-time utility — not part of the publishing pipeline.
+
+**Logout is client-side, not an endpoint.** The session is a stateless HMAC
+cookie, so the admin page logs out by expiring `hkcn_admin_session` with
+`document.cookie` (same name + `Path=/` overwrites the HttpOnly cookie). No
+`/api/admin/auth/logout` endpoint exists — deliberately, to stay under
+Vercel's 12-serverless-functions-per-deployment Hobby limit.
+
+**Web Analytics.** Enabled on the Vercel dashboard (Hobby free: 50,000
+events/month, 30 days history). No npm package is installed — this site has
+no build step. Instead the pages carry exactly what `@vercel/analytics` v2
+`inject()` does in production, verified against the published package
+source: the `window.va` stub plus `<script defer
+src="/_vercel/insights/script.js">` (in `index.html`, `admin/index.html`,
+and the article template in `api/article-page.js`). The dashboard's
+Get Started shows no plain-HTML snippet, but the v2 package source confirms
+this is the script `inject()` loads. Page views should appear in the
+dashboard (Analytics → Countries / Referrers / Devices) ~30 s after a visit.
 
 ## Still missing — dashboard steps for the user (Supabase + R2)
 
@@ -206,11 +223,11 @@ INGEST_SECRET=test-secret node scripts/serve.mjs 3100
 |---|---|
 | `index.html`, `assets/style.css`, `assets/logo-*.png`, `assets/favicon.png` | copied verbatim from the live repo |
 | `assets/app.js` | live `app.js` with only the data loading changed (diff it: theme/i18n/render/share code is identical) |
-| `api/lib/data.js` | the data seam (seed ↔ Supabase, R2 ↔ local images) |
-| `api/*.js` | Vercel serverless functions (no dependencies, no framework) |
+| `lib/data.js` | the data seam (seed ↔ Supabase, R2 ↔ local images) |
+| `api/*.js` | Vercel serverless functions (no dependencies, no framework). 11 functions — shared code lives in root `lib/`, NOT under `api/`, or Vercel would count it as a function (Hobby limit is 12 per deployment) |
 | `admin/index.html` | admin UI (Google SSO; calls `/api/admin/*`) |
-| `api/lib/admin-auth.js` | shared Google SSO session check for all `/api/admin/` routes |
-| `api/admin/config.js`, `api/admin/auth/callback.js`, `api/admin/auth/logout.js` | admin sign-in: client-id config, ID-token exchange, logout |
+| `lib/admin-auth.js` | shared Google SSO session check for all `/api/admin/` routes |
+| `api/admin/config.js`, `api/admin/auth/callback.js` | admin sign-in: client-id config, ID-token exchange (logout is client-side — no endpoint) |
 | `api/admin/articles.js` | admin article list / get / edit / delete |
 | `api/admin/r2-migrate.js` | one-time upload of the 5 design images to R2 (SigV4, no SDK) |
 | `data/seed.json`, `data/seed-meta.json` | migration snapshot (regenerate with `scripts/migrate.mjs`) |

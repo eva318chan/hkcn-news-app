@@ -33,7 +33,6 @@ const handlers = {
   "/api/rss.xml": loadHandler("rss.xml.js"),
   "/api/admin/config": loadHandler("admin/config.js"),
   "/api/admin/auth/callback": loadHandler("admin/auth/callback.js"),
-  "/api/admin/auth/logout": loadHandler("admin/auth/logout.js"),
   "/api/admin/articles": loadHandler("admin/articles.js"),
   "/api/admin/r2-migrate": loadHandler("admin/r2-migrate.js"),
 };

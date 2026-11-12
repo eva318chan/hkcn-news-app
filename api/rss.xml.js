@@ -2,7 +2,7 @@
 // push_feeds.py). Same item fields as the live feed: title/link/guid/pubDate/
 // description in zh_hant, description truncated at 500 chars like the old feed.
 "use strict";
-const { listArticles, siteUrl, setCache } = require("./lib/data");
+const { listArticles, siteUrl, setCache } = require("../lib/data");
 
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 

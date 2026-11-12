@@ -12,7 +12,7 @@
 //   Do not call this from the pipeline — it is a one-time migration only.
 "use strict";
 const crypto = require("crypto");
-const { requireAdmin } = require("../lib/admin-auth");
+const { requireAdmin } = require("../../lib/admin-auth");
 
 const FILES = [
   { url: "https://raw.githubusercontent.com/eva318chan/hkcn-news-app/main/design/202611/20261105-eu-ukraine-reconstruction-talks.jpg", key: "design/202611/20261105-eu-ukraine-reconstruction-talks.jpg", expected: 247683 },

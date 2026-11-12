@@ -8,10 +8,10 @@
 // no full body column; the article page renders the summary as its content.
 // Writes return 503 in seed mode (no database to write to).
 "use strict";
-const { requireAdmin } = require("../lib/admin-auth");
+const { requireAdmin } = require("../../lib/admin-auth");
 const {
   dbConfigured, adminListArticles, getArticleAdmin, updateArticle, deleteArticle,
-} = require("../lib/data");
+} = require("../../lib/data");
 
 function readBody(req) {
   return new Promise((resolve, reject) => {

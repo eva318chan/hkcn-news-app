@@ -119,17 +119,13 @@ data; `/api/admin/articles` returns 401).
 mode filters drafts too), so setting an article to `draft` unpublishes it
 everywhere at once.
 
-**One-time R2 migration (`POST /api/admin/r2-migrate`, admin session only).**
-The R2 credentials are stored encrypted in Vercel — readable by serverless
-functions at runtime, but not readable back through the Vercel API — so no
-external script can upload with them. This endpoint uploads from inside the
-function instead: it fetches the 5 AI design images from their public GitHub
-raw URLs and PUTs each to the R2 bucket (`design/202611/<file>`, Content-Type
-`image/jpeg`) using a SigV4-signed S3-compatible PUT (Node's built-in crypto,
-no SDK). Credentials come from `process.env` (`R2_ACCESS_KEY_ID`,
-`R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_BUCKET`). PUTs are idempotent, so
-re-running is safe. Returns a JSON summary of keys uploaded with sizes (and
-any failures). It is a one-time utility — not part of the publishing pipeline.
+**R2 migration (done 2026-11-13, endpoint removed).** The 5 AI design images
+were uploaded to the `hkcn-news-images` bucket (`design/202611/<file>`) via
+the admin migrate button, and the articles now serve them from the R2 public
+URL. The button and its `POST /api/admin/r2-migrate` endpoint were removed
+afterwards — the endpoint only handled those 5 files, and removing it frees
+a serverless-function slot (now 10/12). New design images from the pipeline
+are logged as "待 R2 backfill" and will need a future backfill route.
 
 **Logout is server-side, not an endpoint of its own.** The session cookie is
 HttpOnly, so JavaScript cannot clear it — the old `document.cookie` clear
@@ -257,12 +253,11 @@ INGEST_SECRET=test-secret node scripts/serve.mjs 3100
 | `index.html`, `assets/style.css`, `assets/logo-*.png`, `assets/favicon.png` | copied verbatim from the live repo |
 | `assets/app.js` | live `app.js` with only the data loading changed (diff it: theme/i18n/render/share code is identical) |
 | `lib/data.js` | the data seam (seed ↔ Supabase, R2 ↔ local images) |
-| `api/*.js` | Vercel serverless functions (no dependencies, no framework). 11 functions — shared code lives in root `lib/`, NOT under `api/`, or Vercel would count it as a function (Hobby limit is 12 per deployment) |
+| `api/*.js` | Vercel serverless functions (no dependencies, no framework). 10 functions — shared code lives in root `lib/`, NOT under `api/`, or Vercel would count it as a function (Hobby limit is 12 per deployment) |
 | `admin/index.html` | admin UI (Google SSO; calls `/api/admin/*`) |
 | `lib/admin-auth.js` | shared Google SSO session check for all `/api/admin/` routes |
-| `api/admin/config.js`, `api/admin/auth/callback.js` | admin sign-in: client-id config, ID-token exchange (logout is client-side — no endpoint) |
-| `api/admin/articles.js` | admin article list / get / edit / delete |
-| `api/admin/r2-migrate.js` | one-time upload of the 5 design images to R2 (SigV4, no SDK) |
+| `api/admin/config.js`, `api/admin/auth/callback.js` | admin sign-in: client-id config, ID-token exchange (logout is a branch of the callback — server-side cookie expiry) |
+| `api/admin/articles.js` | admin article list / get / create / edit / delete |
 | `data/seed.json`, `data/seed-meta.json` | migration snapshot (regenerate with `scripts/migrate.mjs`) |
 | `design/202611/*.jpg` | the 5 design images in R2 layout |
 | `scripts/migrate.mjs`, `scripts/serve.mjs` | migration + local dev server |

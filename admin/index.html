@@ -65,9 +65,7 @@
     <div class="admin-bar">
       <span id="whoami" class="muted"></span>
       <button class="abtn" id="logoutBtn" type="button">登出</button>
-      <button class="abtn" id="migrateBtn" type="button">上載 5 張設計圖去 R2</button>
     </div>
-    <div id="migrateOut" class="muted"></div>
     <div class="admin-bar">
       <input type="search" id="q" placeholder="搜尋標題 / 摘要 / slug…" aria-label="搜尋">
       <select id="statusFilter" aria-label="狀態">
@@ -366,18 +364,6 @@
     api("/api/admin/auth/callback", { method: "POST", body: JSON.stringify({ action: "logout" }) })
       .then(function(){ location.reload(); })
       .catch(function(e){ showMsg("登出失敗：" + e.message, true); });
-  });
-
-  $("migrateBtn").addEventListener("click", function(){
-    $("migrateOut").textContent = "上載中…";
-    api("/api/admin/r2-migrate", { method: "POST", body: "{}" }).then(function(j){
-      var lines = [];
-      (j.uploaded || []).forEach(function(u){ lines.push("✓ " + u.key + " (" + u.bytes + " bytes)"); });
-      (j.failed || []).forEach(function(f){ lines.push("✗ " + f.key + " — " + f.error); });
-      $("migrateOut").textContent = lines.join("  ·  ") || "沒有結果。";
-      if (j.failed && j.failed.length) showMsg("部分圖片上載失敗，詳見上方。", true);
-      else showMsg("5 張設計圖已上載去 R2。");
-    }).catch(function(e){ $("migrateOut").textContent = ""; showMsg("上載失敗：" + e.message, true); });
   });
 
   // Boot: check config, then check whether already signed in.

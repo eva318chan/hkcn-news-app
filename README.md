@@ -19,7 +19,7 @@ Reader → Vercel (hkcn-news-app)
   ├── api/article-page.js              /a/<id>.html — server-rendered, og tags in HTML
   ├── api/meta.js                      dates + counts (replaces data/manifest.json)
   ├── api/sitemap.xml.js / rss.xml.js  generated live from the store
-  ├── api/ingest.js                    POST with x-ingest-secret — the only write path
+  ├── api/ingest.js                    POST with x-ingest-secret — the pipeline write path
   ├── admin/index.html                 admin UI (Google SSO, see below)
   └── api/admin/*                      admin API (all routes require the Google SSO session)
         ├── Supabase Postgres (articles table) — DATABASE ONLY
@@ -64,12 +64,43 @@ No secret, token or key is in this repo. See `.env.example`.
 ## Admin (`/admin/`)
 
 The admin lives in this same project (no separate app). It manages the
-articles in Supabase: list/search (paginated, newest first, all statuses),
-edit an article's titles, summaries, tags, category, image URL and status,
-unpublish (status `draft` — hidden from the public site), and delete (the UI
-confirms first). Articles have no full body column — the editable text is
-`title_*` / `summary_*` in en/zh_hant/zh_hans, and the article page renders
-the summary as its content.
+articles in Supabase: create a new article, list/search (paginated, newest
+first, all statuses), edit an article's titles, summaries, tags, category,
+image URL and status, unpublish (status `draft` — hidden from the public
+site), and delete (the UI confirms first). Articles have no full body
+column — the editable text is `title_*` / `summary_*` in en/zh_hant/zh_hans,
+and the article page renders the summary as its content.
+
+**Admin API — create / update without touching the DB.** `POST
+/api/admin/articles` creates an article and `PATCH
+/api/admin/articles?id=<slug>` updates one; both need the admin Google SSO
+session (401 without it) and return 503 in seed mode (no database to write
+to). Create payload:
+
+```json
+{ "slug": "20261113-example-news",
+  "title_zh_hant": "標題", "title_en": "Title",
+  "summary_zh_hant": "摘要…", "tags_zh_hant": ["香港"],
+  "category": "hongkong", "status": "published",
+  "source_name": "政府新聞處", "source_url": "https://…",
+  "image_url": "https://…", "image_prompt": "AI 設計圖 prompt…" }
+```
+
+Only a title (`zh_hant` or `en`) is required. `slug` is optional — when
+omitted it is auto-derived from the English title (lowercase letters, digits
+and hyphens only; dots are rejected with 400, because a dotted slug broke the
+old `/a/<id>.html` routing). `published_at` defaults to now; `status`
+defaults to `published` (`draft` unpublishes); `category` defaults to
+`other`. Creating with a slug that already exists returns 409 and never
+overwrites — use PATCH to update. PATCH accepts the same fields (plus
+`image_r2_key`, `image_caption`, `footer_note`); omitted fields are left
+unchanged. `image_prompt` is only stored when migration 002 has been applied
+to the database (`supabase/migrations/002_image_prompt.sql`).
+
+**The automated pipeline keeps using `POST /api/ingest` with
+`INGEST_SECRET`.** The cron cannot hold a Google SSO session, so the admin
+API is for human / admin use only — pipeline publishing is unchanged (see
+Publishing below).
 
 **Auth is Google SSO only — no passwords.** The admin page shows a Google
 Sign-In button (Google Identity Services); the ID token is sent to
@@ -100,11 +131,13 @@ no SDK). Credentials come from `process.env` (`R2_ACCESS_KEY_ID`,
 re-running is safe. Returns a JSON summary of keys uploaded with sizes (and
 any failures). It is a one-time utility — not part of the publishing pipeline.
 
-**Logout is client-side, not an endpoint.** The session is a stateless HMAC
-cookie, so the admin page logs out by expiring `hkcn_admin_session` with
-`document.cookie` (same name + `Path=/` overwrites the HttpOnly cookie). No
-`/api/admin/auth/logout` endpoint exists — deliberately, to stay under
-Vercel's 12-serverless-functions-per-deployment Hobby limit.
+**Logout is server-side, not an endpoint of its own.** The session cookie is
+HttpOnly, so JavaScript cannot clear it — the old `document.cookie` clear
+never worked (the session stayed valid until expiry). The admin page POSTs
+`{ action: "logout" }` to `/api/admin/auth/callback`, which expires
+`hkcn_admin_session` with `Max-Age=0`. No separate logout endpoint exists —
+the existing callback handles it, deliberately, to stay under Vercel's
+12-serverless-functions-per-deployment Hobby limit.
 
 **Web Analytics.** Enabled on the Vercel dashboard (Hobby free: 50,000
 events/month, 30 days history). No npm package is installed — this site has

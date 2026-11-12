@@ -49,7 +49,7 @@
 </header>
 <main class="admin-wrap">
   <h1>文章管理</h1>
-  <p class="muted">只限獲授權的 Google 帳戶登入。改標題、摘要、分類、圖片、狀態（下架 = 草稿），或刪除文章。</p>
+  <p class="muted">只限獲授權的 Google 帳戶登入。新增文章、改標題、摘要、分類、圖片、狀態（下架 = 草稿），或刪除文章。</p>
   <div id="msg" class="hidden"></div>
 
   <div id="setupBox" class="hidden">
@@ -85,6 +85,42 @@
       <button class="abtn" id="prevBtn" type="button">‹ 上一頁</button>
       <span id="pageInfo" class="muted"></span>
       <button class="abtn" id="nextBtn" type="button">下一頁 ›</button>
+    </div>
+
+    <div class="admin-bar">
+      <button class="abtn primary" id="newBtn" type="button">＋ 新增文章</button>
+    </div>
+
+    <div id="createBox" class="hidden">
+      <h2 style="font-size:18px;margin:24px 0 4px">新增文章</h2>
+      <p class="muted">標題至少填繁體或英文其中一個。Slug 留空會自動由英文標題產生（只可用細階英文字母、數字、連字號，唔可以用點）。發佈時間留空即係而家。</p>
+      <form class="edit-form" id="createForm">
+        <div class="row2">
+          <div><label>Slug（可留空自動產生）</label><input type="text" id="c_slug" placeholder="例如 20261113-example-news"></div>
+          <div><label>分類</label><input type="text" id="c_category" placeholder="例如 hongkong"></div>
+          <div><label>標題（繁體）</label><input type="text" id="c_title_zh_hant"></div>
+          <div><label>標題（簡體）</label><input type="text" id="c_title_zh_hans"></div>
+          <div><label>標題（英文）</label><input type="text" id="c_title_en"></div>
+          <div><label>發佈時間（可留空 = 而家）</label><input type="text" id="c_published_at" placeholder="2026-11-13T10:00:00+08:00"></div>
+        </div>
+        <label>摘要（繁體）</label><textarea id="c_summary_zh_hant"></textarea>
+        <label>摘要（簡體）</label><textarea id="c_summary_zh_hans"></textarea>
+        <label>摘要（英文）</label><textarea id="c_summary_en"></textarea>
+        <div class="row2">
+          <div><label>標籤（繁體，逗號分隔）</label><input type="text" id="c_tags_zh_hant"></div>
+          <div><label>標籤（簡體，逗號分隔）</label><input type="text" id="c_tags_zh_hans"></div>
+          <div><label>標籤（英文，逗號分隔）</label><input type="text" id="c_tags_en"></div>
+          <div><label>狀態</label><select id="c_status"><option value="published">已發佈</option><option value="draft">草稿（下架）</option></select></div>
+        </div>
+        <label>來源名稱</label><input type="text" id="c_source_name">
+        <label>來源 URL</label><input type="text" id="c_source_url">
+        <label>圖片 URL</label><input type="text" id="c_image_url">
+        <label>AI 設計圖 prompt（有的話）</label><textarea id="c_image_prompt"></textarea>
+        <div class="admin-bar">
+          <button class="abtn primary" type="submit">建立文章</button>
+          <button class="abtn" type="button" id="cancelCreateBtn">取消</button>
+        </div>
+      </form>
     </div>
 
     <div id="editBox" class="hidden">
@@ -270,6 +306,47 @@
     api("/api/admin/articles?id=" + encodeURIComponent(state.editing), { method: "DELETE" })
       .then(function(){ showMsg("已刪除。"); state.editing = null; $("editBox").classList.add("hidden"); loadList(); })
       .catch(function(e){ showMsg("刪除失敗：" + e.message, true); });
+  });
+
+  $("newBtn").addEventListener("click", function(){
+    hideMsg();
+    $("createBox").classList.remove("hidden");
+    $("createBox").scrollIntoView({ behavior: "smooth" });
+  });
+
+  $("cancelCreateBtn").addEventListener("click", function(){
+    $("createBox").classList.add("hidden");
+  });
+
+  $("createForm").addEventListener("submit", function(ev){
+    ev.preventDefault();
+    var body = {
+      slug: $("c_slug").value.trim() || undefined,
+      title_zh_hant: $("c_title_zh_hant").value,
+      title_zh_hans: $("c_title_zh_hans").value,
+      title_en: $("c_title_en").value,
+      category: $("c_category").value,
+      published_at: $("c_published_at").value.trim() || undefined,
+      summary_zh_hant: $("c_summary_zh_hant").value,
+      summary_zh_hans: $("c_summary_zh_hans").value,
+      summary_en: $("c_summary_en").value,
+      tags_zh_hant: textToTags($("c_tags_zh_hant").value),
+      tags_zh_hans: textToTags($("c_tags_zh_hans").value),
+      tags_en: textToTags($("c_tags_en").value),
+      status: $("c_status").value,
+      source_name: $("c_source_name").value.trim() || null,
+      source_url: $("c_source_url").value.trim() || null,
+      image_url: $("c_image_url").value.trim() || null,
+      image_prompt: $("c_image_prompt").value.trim() || null,
+    };
+    api("/api/admin/articles", { method: "POST", body: JSON.stringify(body) })
+      .then(function(j){
+        showMsg("已建立文章：" + (j.url || ("/a/" + j.article.slug + ".html")));
+        $("createBox").classList.add("hidden");
+        $("createForm").reset();
+        state.page = 1; loadList();
+      })
+      .catch(function(e){ showMsg("建立失敗：" + e.message, true); });
   });
 
   $("searchBtn").addEventListener("click", function(){ state.page = 1; loadList(); });

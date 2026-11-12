@@ -1,0 +1,123 @@
+// POST /api/ingest — the publishing endpoint used by the Bella pipeline.
+//   Headers: x-ingest-secret: <INGEST_SECRET env var>
+//   Body (one article, same shape as the old data/*.json entries):
+//     { id, category, published_at, source:{name,url}, image_url,
+//       image_r2_key?, image_caption?, footer_note?,
+//       title:{en,zh_hant,zh_hans}, summary:{en,zh_hant,zh_hans},
+//       tags:{en,zh_hant,zh_hans} }
+//   Dedupes by (site, slug): re-posting the same id updates it, never duplicates.
+//   DELETE /api/ingest?slug=<id> — removes one article (same secret; used to
+//   clean up test inserts).
+// Without INGEST_SECRET configured this returns 503. Without Supabase
+// configured it returns 503 after auth — there is nowhere to store the row,
+// and staging must never pretend an insert succeeded.
+"use strict";
+
+const SITE = "hkcn";
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    if (req.body && typeof req.body === "object") return resolve(req.body);
+    let raw = "";
+    req.on("data", (c) => { raw += c; });
+    req.on("end", () => {
+      try { resolve(raw ? JSON.parse(raw) : {}); }
+      catch (e) { reject(new Error("invalid JSON body")); }
+    });
+    req.on("error", reject);
+  });
+}
+
+function toDbRow(a) {
+  // Old schema: source may be a plain string with no URL.
+  const srcName = typeof a.source === "string" ? a.source : (a.source?.name || "");
+  const srcUrl = typeof a.source === "string" ? (a.source_url || "") : (a.source?.url || a.source_url || "");
+  return {
+    site: SITE,
+    slug: a.id,
+    category: a.category,
+    published_at: a.published_at,
+    source_name: srcName,
+    source_url: srcUrl,
+    image_url: a.image_url || null,
+    image_r2_key: a.image_r2_key || null,
+    image_caption: a.image_caption || null,
+    footer_note: a.footer_note || null,
+    title_en: a.title?.en || "",
+    title_zh_hant: a.title?.zh_hant || "",
+    title_zh_hans: a.title?.zh_hans || "",
+    summary_en: a.summary?.en || "",
+    summary_zh_hant: a.summary?.zh_hant || "",
+    summary_zh_hans: a.summary?.zh_hans || "",
+    tags_en: a.tags?.en || [],
+    tags_zh_hant: a.tags?.zh_hant || [],
+    tags_zh_hans: a.tags?.zh_hans || [],
+    status: "published",
+  };
+}
+
+function validate(a) {
+  if (!a || typeof a !== "object") return "body must be an object";
+  if (!a.id || typeof a.id !== "string") return "missing id";
+  if (!/^\d{8}-[a-z0-9-]+$/.test(a.id)) return "id must look like YYYYMMDD-slug";
+  if (!a.category) return "missing category";
+  if (!a.published_at || Number.isNaN(Date.parse(a.published_at))) return "missing/invalid published_at";
+  if (!a.title?.zh_hant && !a.title?.en) return "missing title";
+  if (!a.summary?.zh_hant && !a.summary?.en) return "missing summary";
+  return null;
+}
+
+module.exports = async (req, res) => {
+  const secret = process.env.INGEST_SECRET || "";
+  if (!secret) {
+    res.status(503).json({ ok: false, error: "ingest not configured: INGEST_SECRET is not set" });
+    return;
+  }
+  const given = req.headers["x-ingest-secret"] || "";
+  if (given !== secret) {
+    res.status(401).json({ ok: false, error: "unauthorized" });
+    return;
+  }
+  const sbUrl = process.env.SUPABASE_URL || "";
+  const sbKey = process.env.SUPABASE_SERVICE_KEY || "";
+  if (!sbUrl || !sbKey) {
+    res.status(503).json({ ok: false, error: "database not configured: SUPABASE_URL / SUPABASE_SERVICE_KEY are not set" });
+    return;
+  }
+  const headers = {
+    apikey: sbKey, Authorization: `Bearer ${sbKey}`,
+    "Content-Type": "application/json", Prefer: "resolution=merge-duplicates",
+  };
+
+  try {
+    if (req.method === "DELETE") {
+      const slug = String((req.query || {}).slug || "").trim();
+      if (!slug) { res.status(400).json({ ok: false, error: "missing slug" }); return; }
+      const r = await fetch(`${sbUrl}/rest/v1/articles?site=eq.${SITE}&slug=eq.${encodeURIComponent(slug)}`, {
+        method: "DELETE", headers,
+      });
+      if (!r.ok) { res.status(502).json({ ok: false, error: `database error ${r.status}` }); return; }
+      res.status(200).json({ ok: true, deleted: slug });
+      return;
+    }
+
+    if (req.method !== "POST") {
+      res.setHeader("Allow", "POST, DELETE");
+      res.status(405).json({ ok: false, error: "method not allowed" });
+      return;
+    }
+    const body = await readBody(req);
+    const err = validate(body);
+    if (err) { res.status(400).json({ ok: false, error: err }); return; }
+    const r = await fetch(`${sbUrl}/rest/v1/articles?on_conflict=site,slug`, {
+      method: "POST", headers, body: JSON.stringify(toDbRow(body)),
+    });
+    if (!r.ok) {
+      res.status(502).json({ ok: false, error: `database error ${r.status}: ${(await r.text()).slice(0, 200)}` });
+      return;
+    }
+    res.status(200).json({ ok: true, slug: body.id, url: `/a/${body.id}.html` });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e).slice(0, 200) });
+  }
+};

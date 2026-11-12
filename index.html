@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>中港新聞速報 | HK-China News Express</title>
+<meta name="description" content="香港及中國綜合新聞，每小時更新。Hong Kong & China general news, updated hourly.">
+<meta property="og:site_name" content="中港新聞速報 HK-China News Express">
+<meta property="og:type" content="website">
+<meta property="og:title" content="中港新聞速報 | HK-China News Express">
+<meta property="og:description" content="香港及中國綜合新聞，每小時更新。Hong Kong & China general news, updated hourly.">
+<link rel="icon" href="assets/favicon.png">
+<link rel="stylesheet" href="assets/style.css">
+<script>
+function logoFallback(){var b=document.getElementById("brandName");if(b)b.style.display="flex";["logoLight","logoDark"].forEach(function(id){var e=document.getElementById(id);if(e)e.style.display="none";});}
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="./" aria-label="home">
+    <img id="logoLight" class="logo-img" src="assets/logo-light.png" alt="中港新聞速報 HK-China News Express" onerror="logoFallback()">
+    <img id="logoDark" class="logo-img" src="assets/logo-dark.png" alt="中港新聞速報 HK-China News Express" style="display:none" onerror="logoFallback()">
+    <span class="brand-name" id="brandName" style="display:none"><strong data-i18n="siteName">中港新聞速報</strong><small>HK-CHINA NEWS EXPRESS</small></span>
+  </a>
+  <div class="controls">
+    <div class="lang-switch" role="group" aria-label="language">
+      <button data-lang="en">EN</button><button data-lang="zh_hant">繁</button><button data-lang="zh_hans">简</button>
+    </div>
+    <button id="themeBtn" class="icon-btn" aria-label="theme">🌙</button>
+  </div>
+</header>
+
+<main>
+  <section class="toolbar">
+    <input id="search" class="searchbar" data-i18n-ph="search" placeholder="搜尋新聞、標籤、球隊…" autocomplete="off">
+    <div id="catChips" class="chips"></div>
+    <div id="dateChips" class="chips"></div>
+  </section>
+  <div id="meta" class="meta"></div>
+  <section id="cards" class="cards"></section>
+  <p id="empty" class="empty" hidden data-i18n="noResult"></p>
+  <div class="loadmore"><button id="loadMore" class="btn ghost" data-i18n="loadMore" hidden></button></div>
+</main>
+
+<footer>
+  <p data-i18n="footer"></p>
+  <p style="margin-top:6px">中港新聞速報 · HK-China News Express</p>
+</footer>
+
+<div id="toast" class="toast"></div>
+<script src="assets/app.js"></script>
+</body>
+</html>

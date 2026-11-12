@@ -68,9 +68,11 @@ function toPublic(a) {
 function fromDbRow(r) {
   return {
     id: r.slug, slug: r.slug, category: r.category, published_at: r.published_at,
+    status: r.status || "published",
     source_name: r.source_name, source_url: r.source_url,
     image_url: r.image_url, image_r2_key: r.image_r2_key,
     image_caption: r.image_caption, footer_note: r.footer_note,
+    image_prompt: r.image_prompt || null,
     title_en: r.title_en, title_zh_hant: r.title_zh_hant, title_zh_hans: r.title_zh_hans,
     summary_en: r.summary_en, summary_zh_hant: r.summary_zh_hant, summary_zh_hans: r.summary_zh_hans,
     tags_en: r.tags_en, tags_zh_hant: r.tags_zh_hant, tags_zh_hans: r.tags_zh_hans,
@@ -197,9 +199,12 @@ function listParams({ category, date, tag, q }, imageFilter) {
 
 // Fetch published rows for this site. Only the getMeta fallback (RPC missing)
 // still needs the full set — listArticles pages through sbFetchPage now.
+// Seed rows carry no status (they are all published); the filter keeps a
+// draft out of every public path if one ever appears in seed data.
 async function fetchRows({ category, date, tag, q }) {
   if (!dbConfigured) {
-    return loadSeed().filter((a) => a.site === SITE || !a.site);
+    return loadSeed().filter((a) => (a.site === SITE || !a.site)
+      && (a.status || "published") === "published");
   }
   const params = listParams({ category, date, tag, q });
   const { rows } = await sbFetchPaged("articles", params);
@@ -292,7 +297,8 @@ async function listArticles(opts = {}) {
   const limit = Math.min(100, Math.max(1, parseInt(opts.limit, 10) || 30));
   const offset = (page - 1) * limit;
   if (!dbConfigured) {
-    const rows = loadSeed().filter((a) => a.site === SITE || !a.site);
+    const rows = loadSeed().filter((a) => (a.site === SITE || !a.site)
+      && (a.status || "published") === "published");
     const filtered = rows.filter((a) => matches(a, opts));
     const sorted = sortRows(filtered, opts.sort);
     const total = sorted.length;
@@ -311,7 +317,8 @@ async function getArticle(slug) {
   if (!slug) return null;
   if (!dbConfigured) {
     const a = loadSeed().find((x) => x.id === slug);
-    return a ? toPublic(a) : null;
+    if (!a || (a.status || "published") !== "published") return null;
+    return toPublic(a);
   }
   const rows = await sbFetch(`articles?select=*&site=eq.${SITE}&slug=eq.${encodeURIComponent(slug)}&status=eq.published&limit=1`);
   return rows.length ? toPublic(fromDbRow(rows[0])) : null;
@@ -346,7 +353,126 @@ function setCache(res, seconds) {
   res.setHeader("Cache-Control", `public, s-maxage=${seconds}, stale-while-revalidate=300`);
 }
 
+// ---- Admin (api/admin/*) ----
+// Full row shape for the admin UI: everything toPublic has, plus the fields
+// only an admin may see or change (status, image_prompt, raw column names).
+function toAdmin(a) {
+  const pub = toPublic(a);
+  return {
+    ...pub,
+    slug: a.slug || a.id,
+    status: a.status || "published",
+    image_r2_key: a.image_r2_key || null,
+    image_prompt: a.image_prompt || null,
+    source_name: a.source_name || (typeof a.source === "string" ? a.source : a.source?.name) || "",
+    source_url: a.source_url || (typeof a.source === "string" ? "" : a.source?.url) || "",
+    title_en: a.title_en ?? pub.title.en,
+    title_zh_hant: a.title_zh_hant ?? pub.title.zh_hant,
+    title_zh_hans: a.title_zh_hans ?? pub.title.zh_hans,
+    summary_en: a.summary_en ?? pub.summary.en,
+    summary_zh_hant: a.summary_zh_hant ?? pub.summary.zh_hant,
+    summary_zh_hans: a.summary_zh_hans ?? pub.summary.zh_hans,
+    tags_en: a.tags_en ?? pub.tags.en,
+    tags_zh_hant: a.tags_zh_hant ?? pub.tags.zh_hant,
+    tags_zh_hans: a.tags_zh_hans ?? pub.tags.zh_hans,
+  };
+}
+
+function seedAdminRow(a) {
+  return toAdmin({
+    ...a, slug: a.id, status: a.status || "published",
+    source_name: typeof a.source === "string" ? a.source : a.source?.name,
+    source_url: typeof a.source === "string" ? "" : a.source?.url,
+  });
+}
+
+// Admin list: ALL statuses (drafts included), newest first, optional search
+// across slug + titles + summaries and optional status filter.
+async function adminListArticles({ page = 1, limit = 30, q = "", status = "" } = {}) {
+  page = Math.max(1, parseInt(page, 10) || 1);
+  limit = Math.min(100, Math.max(1, parseInt(limit, 10) || 30));
+  const offset = (page - 1) * limit;
+  if (!dbConfigured) {
+    let rows = loadSeed().filter((a) => a.site === SITE || !a.site);
+    if (status === "published" || status === "draft") {
+      rows = rows.filter((a) => (a.status || "published") === status);
+    }
+    if (q) {
+      const needle = q.toLowerCase();
+      rows = rows.filter((a) => [
+        a.id, a.title?.en, a.title?.zh_hant, a.title?.zh_hans,
+        a.summary?.en, a.summary?.zh_hant, a.summary?.zh_hans,
+      ].join(" ").toLowerCase().includes(needle));
+    }
+    rows.sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""));
+    const total = rows.length;
+    return {
+      total, page, limit, pages: Math.max(1, Math.ceil(total / limit)),
+      articles: rows.slice(offset, offset + limit).map(seedAdminRow),
+    };
+  }
+  const params = new URLSearchParams();
+  params.set("select", "*");
+  params.set("site", `eq.${SITE}`);
+  if (status === "published" || status === "draft") params.set("status", `eq.${status}`);
+  if (q) {
+    const like = `*${q.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")}*`;
+    params.set("or", `(slug.ilike.${like},title_zh_hant.ilike.${like},title_en.ilike.${like},summary_zh_hant.ilike.${like})`);
+  }
+  params.set("order", "published_at.desc,slug.asc");
+  const { rows, total } = await sbFetchPage("articles", params, limit, offset);
+  return {
+    total, page, limit, pages: Math.max(1, Math.ceil(total / limit)),
+    articles: rows.map((r) => toAdmin(fromDbRow(r))),
+  };
+}
+
+// One article for the admin editor, any status. Null when missing.
+async function getArticleAdmin(slug) {
+  if (!slug) return null;
+  if (!dbConfigured) {
+    const a = loadSeed().find((x) => x.id === slug);
+    return a ? seedAdminRow(a) : null;
+  }
+  const rows = await sbFetch(`articles?select=*&site=eq.${SITE}&slug=eq.${encodeURIComponent(slug)}&limit=1`);
+  return rows.length ? toAdmin(fromDbRow(rows[0])) : null;
+}
+
+async function sbWrite(path, method, body) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    method,
+    headers: {
+      apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json", Prefer: "return=representation",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`Supabase ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  return r.json();
+}
+
+// Update one article (admin only). `patch` may only contain real columns;
+// the caller validates. Returns the updated admin row, or null if the slug
+// does not exist. Throws when the DB is not configured.
+async function updateArticle(slug, patch) {
+  if (!dbConfigured) throw new Error("database not configured");
+  const rows = await sbWrite(
+    `articles?site=eq.${SITE}&slug=eq.${encodeURIComponent(slug)}`, "PATCH", patch);
+  return Array.isArray(rows) && rows.length ? toAdmin(fromDbRow(rows[0])) : null;
+}
+
+// Delete one article (admin only). Returns true when a row was removed.
+async function deleteArticle(slug) {
+  if (!dbConfigured) throw new Error("database not configured");
+  const r = await fetch(
+    `${SUPABASE_URL}/rest/v1/articles?site=eq.${SITE}&slug=eq.${encodeURIComponent(slug)}`,
+    { method: "DELETE", headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
+  if (!r.ok) throw new Error(`Supabase ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  return true;
+}
+
 module.exports = {
   SITE, dbConfigured, r2Configured, listArticles, getArticle, getMeta,
   toPublic, resolveImage, siteUrl, setCache,
+  toAdmin, adminListArticles, getArticleAdmin, updateArticle, deleteArticle,
 };

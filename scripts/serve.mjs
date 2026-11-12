@@ -31,6 +31,11 @@ const handlers = {
   "/api/ingest": loadHandler("ingest.js"),
   "/api/sitemap.xml": loadHandler("sitemap.xml.js"),
   "/api/rss.xml": loadHandler("rss.xml.js"),
+  "/api/admin/config": loadHandler("admin/config.js"),
+  "/api/admin/auth/callback": loadHandler("admin/auth/callback.js"),
+  "/api/admin/auth/logout": loadHandler("admin/auth/logout.js"),
+  "/api/admin/articles": loadHandler("admin/articles.js"),
+  "/api/admin/r2-migrate": loadHandler("admin/r2-migrate.js"),
 };
 
 function makeRes(nodeRes) {
@@ -83,6 +88,7 @@ const server = http.createServer(async (req, nodeRes) => {
     }
 
     if (path === "/") path = "/index.html";
+    if (path.endsWith("/")) path += "index.html"; // e.g. /admin/ -> /admin/index.html
     const file = join(ROOT, path);
     if (!existsSync(file) || !statSync(file).isFile() || !file.startsWith(ROOT)) {
       nodeRes.writeHead(404); nodeRes.end("not found"); return;

@@ -19,7 +19,9 @@ Reader → Vercel (hkcn-news-app)
   ├── api/article-page.js              /a/<id>.html — server-rendered, og tags in HTML
   ├── api/meta.js                      dates + counts (replaces data/manifest.json)
   ├── api/sitemap.xml.js / rss.xml.js  generated live from the store
-  └── api/ingest.js                    POST with x-ingest-secret — the only write path
+  ├── api/ingest.js                    POST with x-ingest-secret — the only write path
+  ├── admin/index.html                 admin UI (Google SSO, see below)
+  └── api/admin/*                      admin API (all routes require the Google SSO session)
         ├── Supabase Postgres (articles table) — DATABASE ONLY
         └── Cloudflare R2 (images.hkcnexpress.com) — PRIMARY IMAGE STORE
 ```
@@ -52,9 +54,51 @@ When the env vars appear, the app switches automatically. Nothing else changes.
 | `SUPABASE_SERVICE_KEY` | for live DB + ingest | service_role key — **server-side only, never in the browser or repo** |
 | `R2_PUBLIC_BASE_URL` | for live images | `https://images.hkcnexpress.com` |
 | `INGEST_SECRET` | for publishing | long random string; same value in the Bella pipeline |
+| `GOOGLE_CLIENT_ID` | for admin sign-in | Google OAuth client id (public id, not a secret); the OAuth client must allow the origin `https://hkcn-news-app-eva318chan.vercel.app` and the callback `/api/admin/auth/callback` |
+| `ADMIN_EMAILS` | for admin sign-in | comma-separated allowlist of Google accounts allowed into `/admin/` (e.g. `eddiehlk@gmail.com,eva318.chan@gmail.com`) |
+| `ADMIN_SESSION_SECRET` | for admin sign-in | long random string; HMAC key for the admin session cookie — server-side only, never in the browser or repo |
 | `SITE_URL` | optional | defaults to the request host; set `https://hkcnexpress.com` in production |
 
 No secret, token or key is in this repo. See `.env.example`.
+
+## Admin (`/admin/`)
+
+The admin lives in this same project (no separate app). It manages the
+articles in Supabase: list/search (paginated, newest first, all statuses),
+edit an article's titles, summaries, tags, category, image URL and status,
+unpublish (status `draft` — hidden from the public site), and delete (the UI
+confirms first). Articles have no full body column — the editable text is
+`title_*` / `summary_*` in en/zh_hant/zh_hans, and the article page renders
+the summary as its content.
+
+**Auth is Google SSO only — no passwords.** The admin page shows a Google
+Sign-In button (Google Identity Services); the ID token is sent to
+`/api/admin/auth/callback`, which verifies it with Google, checks the email
+against `ADMIN_EMAILS`, and sets a signed httpOnly session cookie (HMAC with
+`ADMIN_SESSION_SECRET`, 7 days). Every `/api/admin/` route shares that one
+auth check (`api/lib/admin-auth.js`); unauthenticated requests get 401 and
+never see article data. If any of `GOOGLE_CLIENT_ID`, `ADMIN_EMAILS` or
+`ADMIN_SESSION_SECRET` is missing, sign-in fails closed. Sign-in is not
+testable without a real allowlisted Google account — staging verification
+covers only the unauthenticated behaviour (`/admin/` shows the sign-in, not
+data; `/api/admin/articles` returns 401).
+
+**Public site only shows `published` rows.** `/api/articles`, `/api/article`,
+`/a/<id>.html`, sitemap and RSS all filter `status=eq.published` (and seed
+mode filters drafts too), so setting an article to `draft` unpublishes it
+everywhere at once.
+
+**One-time R2 migration (`POST /api/admin/r2-migrate`, admin session only).**
+The R2 credentials are stored encrypted in Vercel — readable by serverless
+functions at runtime, but not readable back through the Vercel API — so no
+external script can upload with them. This endpoint uploads from inside the
+function instead: it fetches the 5 AI design images from their public GitHub
+raw URLs and PUTs each to the R2 bucket (`design/202611/<file>`, Content-Type
+`image/jpeg`) using a SigV4-signed S3-compatible PUT (Node's built-in crypto,
+no SDK). Credentials come from `process.env` (`R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT`, `R2_BUCKET`). PUTs are idempotent, so
+re-running is safe. Returns a JSON summary of keys uploaded with sizes (and
+any failures). It is a one-time utility — not part of the publishing pipeline.
 
 ## Still missing — dashboard steps for the user (Supabase + R2)
 
@@ -164,6 +208,11 @@ INGEST_SECRET=test-secret node scripts/serve.mjs 3100
 | `assets/app.js` | live `app.js` with only the data loading changed (diff it: theme/i18n/render/share code is identical) |
 | `api/lib/data.js` | the data seam (seed ↔ Supabase, R2 ↔ local images) |
 | `api/*.js` | Vercel serverless functions (no dependencies, no framework) |
+| `admin/index.html` | admin UI (Google SSO; calls `/api/admin/*`) |
+| `api/lib/admin-auth.js` | shared Google SSO session check for all `/api/admin/` routes |
+| `api/admin/config.js`, `api/admin/auth/callback.js`, `api/admin/auth/logout.js` | admin sign-in: client-id config, ID-token exchange, logout |
+| `api/admin/articles.js` | admin article list / get / edit / delete |
+| `api/admin/r2-migrate.js` | one-time upload of the 5 design images to R2 (SigV4, no SDK) |
 | `data/seed.json`, `data/seed-meta.json` | migration snapshot (regenerate with `scripts/migrate.mjs`) |
 | `design/202611/*.jpg` | the 5 design images in R2 layout |
 | `scripts/migrate.mjs`, `scripts/serve.mjs` | migration + local dev server |

@@ -136,11 +136,17 @@ Supabase (needs the env vars; run only after the SQL migration).
   write to, and staging must not pretend an insert succeeded. The 401
   (wrong/missing secret) and 400 (bad body) paths are testable on staging; the
   insert→verify→delete test needs the Supabase project from the steps above.
-- **Known limitation:** in Supabase mode, a combined tag+search pre-filter
-  applies only one of the two in the PostgREST query; the JS filter still
-  returns the correct result, but an old matching article could be cut off by
-  the 2,000-row fetch cap in that combined case. Single tag, single search,
-  category and date filters are exact.
+- **Paging is server-side:** `/api/articles` fetches only the requested page
+  from PostgREST (limit + offset, `Prefer: count=exact`, total from the
+  Content-Range header) — the earlier whole-corpus fetch took ~7s for
+  `?limit=20`; one page now returns in well under 1s. Tag + search are
+  combined into one PostgREST `and` group, so both apply server-side. Date
+  filters use the Hong Kong day window (the same day the `/api/meta` chips
+  count); this also fixed the old date bug where articles published
+  16:00–24:00 UTC were invisible under every date filter. The homepage loads
+  one page at a time: the Load More button fetches the next page, and
+  scrolling it into view does the same automatically — the full 2,355
+  articles are never preloaded.
 
 ## Local test
 

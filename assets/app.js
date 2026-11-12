@@ -205,7 +205,19 @@ $("#search").addEventListener("input", e => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(async () => { await reload(); render(); }, 300);
 });
-$("#loadMore").addEventListener("click", async () => { $("#loadMore").disabled = true; await loadPage(PAGE + 1); $("#loadMore").disabled = false; render(); });
+/* ---------- load more: one page at a time, on scroll or on button ---------- */
+// The list is never preloaded: each step fetches exactly one page
+// (PAGE_SIZE rows) from /api/articles. Scrolling to the Load More button
+// loads the next page automatically; the button stays as a fallback.
+let loadingMore = false;
+async function loadNext(){
+  if (loadingMore || PAGE >= PAGES) return;
+  loadingMore = true;
+  const btn = $("#loadMore"); if (btn) btn.disabled = true;
+  try { await loadPage(PAGE + 1); render(); }
+  finally { loadingMore = false; if (btn) btn.disabled = false; }
+}
+$("#loadMore").addEventListener("click", loadNext);
 
 /* ---------- init ---------- */
 (async function(){
@@ -216,6 +228,12 @@ $("#loadMore").addEventListener("click", async () => { $("#loadMore").disabled =
     await loadPage(1);
   } catch(e){ /* offline / empty */ }
   renderChips(); render();
+  if ("IntersectionObserver" in window) {
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) loadNext();
+    }, { rootMargin: "400px" });
+    io.observe($("#loadMore"));
+  }
   if (location.hash.startsWith("#a-")) {
     const el = document.getElementById(location.hash.slice(1));
     if (el) setTimeout(() => el.scrollIntoView({block:"center"}), 400);

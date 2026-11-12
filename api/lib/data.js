@@ -115,36 +115,114 @@ async function sbFetchPaged(path, params) {
   return { rows, total: total ?? rows.length };
 }
 
-// Fetch published rows for this site, with server-side filters where PostgREST
-// can express them. Fetched in pages (sbFetchPaged) so the full set comes
-// back despite PostgREST's 1000-row cap — final sort/pagination happens in
-// JS so seed and Supabase behave identically.
-async function fetchRows({ category, date, tag, q }) {
-  if (!dbConfigured) {
-    return loadSeed().filter((a) => a.site === SITE || !a.site);
-  }
+// Single PostgREST page: limit + offset with Prefer: count=exact. The true
+// total comes from the Content-Range header — listArticles never fetches rows
+// beyond the requested page (the old code fetched the whole corpus, ~7s for
+// /api/articles?limit=20 with 2,355 rows).
+async function sbFetchPage(path, params, limit, offset) {
+  const p = new URLSearchParams(params);
+  p.set("limit", String(limit));
+  p.set("offset", String(offset));
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}?${p.toString()}`, {
+    headers: {
+      apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`,
+      Prefer: "count=exact",
+    },
+  });
+  if (!r.ok) throw new Error(`Supabase ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  const rows = await r.json();
+  const m = (r.headers.get("content-range") || "").match(/\/(\d+)$/);
+  return { rows, total: m ? parseInt(m[1], 10) : rows.length };
+}
+
+function nextDay(date) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date || "");
+  if (!m) return date;
+  return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3] + 1)).toISOString().slice(0, 10);
+}
+
+// Build the PostgREST filter params for a list query. Server-side filters
+// are the authority now (the old code fetched the whole corpus and filtered
+// in JS); listArticles still re-applies `matches` to the fetched page as a
+// safety net, so the two paths agree. Tag + search together used to
+// overwrite each other (both used the `or` param) — they are combined into
+// one `and` group now.
+function listParams({ category, date, tag, q }, imageFilter) {
   const params = new URLSearchParams();
   params.set("select", "*");
   params.set("site", `eq.${SITE}`);
   params.set("status", "eq.published");
   if (category) params.set("category", `eq.${category}`);
+  const ands = [];
+  const ors = [];
   if (date) {
-    // One `and=(...)` group so the day window is exact (a plain repeated
-    // param would be ambiguous). JS re-applies the same filter below.
-    params.set("and", `(published_at.gte.${date}T00:00:00+08:00,published_at.lt.${date}T23:59:59+08:00)`);
+    // Day window in Hong Kong time — the same day the /api/meta date chips
+    // count (articles_meta groups by Asia/Hong_Kong). Half-open, so the last
+    // second of the day is included too (the old lt 23:59:59 dropped it). A
+    // malformed date matches nothing instead of everything.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      ands.push(`published_at.gte.${date}T00:00:00+08:00`);
+      ands.push(`published_at.lt.${nextDay(date)}T00:00:00+08:00`);
+    } else {
+      ands.push("published_at.gte.9999-12-31T00:00:00+08:00");
+      ands.push("published_at.lt.9999-12-31T00:00:01+08:00");
+    }
   }
-  if (tag) {
-    params.set("or", `(tags_zh_hant.cs.{${tag}},tags_en.cs.{${tag}},tags_zh_hans.cs.{${tag}})`);
-  }
+  if (tag) ors.push(`(tags_zh_hant.cs.{${tag}},tags_en.cs.{${tag}},tags_zh_hans.cs.{${tag}})`);
   if (q) {
-    const like = `*${q}*`;
-    params.set("or", `(title_zh_hant.ilike.${like},title_en.ilike.${like},summary_zh_hant.ilike.${like},summary_en.ilike.${like},source_name.ilike.${like})`);
+    // Escape LIKE wildcards so the server pattern means the same substring
+    // search as the JS `includes` check below.
+    const like = `*${q.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")}*`;
+    ors.push(`(title_zh_hant.ilike.${like},title_en.ilike.${like},summary_zh_hant.ilike.${like},summary_en.ilike.${like},source_name.ilike.${like})`);
+  }
+  if (imageFilter === "with") ands.push("image_url.neq.");
+  if (imageFilter === "without") ors.push("(image_url.is.null,image_url.eq.)");
+  if (ors.length === 1 && ands.length === 0) params.set("or", ors[0]);
+  else if (ands.length + ors.length > 0) {
+    params.set("and", `(${[...ands, ...ors.map((o) => `or${o}`)].join(",")})`);
   }
   // Secondary key makes page boundaries deterministic when several rows
-  // share the same published_at (JS re-sorts afterwards anyway).
+  // share the same published_at.
   params.set("order", "published_at.desc,slug.asc");
+  return params;
+}
+
+// Fetch published rows for this site. Only the getMeta fallback (RPC missing)
+// still needs the full set — listArticles pages through sbFetchPage now.
+async function fetchRows({ category, date, tag, q }) {
+  if (!dbConfigured) {
+    return loadSeed().filter((a) => a.site === SITE || !a.site);
+  }
+  const params = listParams({ category, date, tag, q });
   const { rows } = await sbFetchPaged("articles", params);
   return rows.map(fromDbRow);
+}
+
+// sort=image_first: with-image articles first, then imageless, each newest
+// first. PostgREST cannot order by "has image", so the page is assembled
+// from two single-page queries (one per partition) — never more rows than
+// the requested page, plus one limit=0 count probe when the page lies fully
+// inside the first partition.
+async function listImageFirst(opts, page, limit, offset) {
+  const withParams = listParams(opts, "with");
+  const first = await sbFetchPage("articles", withParams, limit, offset);
+  let rows = first.rows;
+  let total = first.total;
+  if (offset + limit > first.total) {
+    const withoutParams = listParams(opts, "without");
+    const withoutOffset = Math.max(0, offset - first.total);
+    const withoutLimit = limit - Math.max(0, first.total - offset);
+    const second = await sbFetchPage("articles", withoutParams, withoutLimit, withoutOffset);
+    total = first.total + second.total;
+    rows = offset < first.total ? [...first.rows, ...second.rows] : second.rows;
+  } else {
+    const withoutParams = listParams(opts, "without");
+    const { total: totalWithout } = await sbFetchPage("articles", withoutParams, 0, 0);
+    total = first.total + totalWithout;
+  }
+  const articles = rows.map(fromDbRow).filter((a) => matches(a, opts)).map(toPublic);
+  const pages = Math.max(1, Math.ceil(total / limit));
+  return { total, page, limit, pages, articles };
 }
 
 // 11 old rows have tags as a plain list (not {en, zh_hant, zh_hans}) and 134
@@ -157,7 +235,7 @@ function allTags(a) {
 
 function matches(a, { category, date, tag, q }) {
   if (category && a.category !== category) return false;
-  if (date && !(a.published_at || "").startsWith(date)) return false;
+  if (date && hktDate(a.published_at) !== date) return false;
   if (tag && !allTags(a).includes(tag)) return false;
   if (q) {
     const needle = q.toLowerCase();
@@ -188,16 +266,37 @@ function sortRows(rows, sort) {
   return [...rows].sort(byDate);
 }
 
+// Date chips count Hong Kong days (articles_meta groups by Asia/Hong_Kong),
+// and published_at is an instant — compare the Hong Kong date of the
+// instant, not the UTC date the API renders. The old startsWith check on the
+// rendered string dropped every article published 16:00–24:00 UTC from all
+// date filters (e.g. date=2026-11-13 returned 0 while its chip says 4;
+// 2026-11-12 returned 93 instead of 114). For seed rows (strings already in
+// +08:00) this gives the same result as startsWith did.
+function hktDate(iso) {
+  const d = new Date(iso || "");
+  if (Number.isNaN(d.getTime())) return (iso || "").slice(0, 10);
+  return new Date(d.getTime() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
 async function listArticles(opts = {}) {
   const page = Math.max(1, parseInt(opts.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(opts.limit, 10) || 30));
-  const rows = await fetchRows(opts);
-  const filtered = rows.filter((a) => matches(a, opts));
-  const sorted = sortRows(filtered, opts.sort);
-  const total = sorted.length;
+  const offset = (page - 1) * limit;
+  if (!dbConfigured) {
+    const rows = loadSeed().filter((a) => a.site === SITE || !a.site);
+    const filtered = rows.filter((a) => matches(a, opts));
+    const sorted = sortRows(filtered, opts.sort);
+    const total = sorted.length;
+    const pages = Math.max(1, Math.ceil(total / limit));
+    return { total, page, limit, pages, articles: sorted.slice(offset, offset + limit).map(toPublic) };
+  }
+  if (opts.sort === "image_first") return listImageFirst(opts, page, limit, offset);
+  const params = listParams(opts);
+  const { rows, total } = await sbFetchPage("articles", params, limit, offset);
+  const articles = rows.map(fromDbRow).filter((a) => matches(a, opts)).map(toPublic);
   const pages = Math.max(1, Math.ceil(total / limit));
-  const slice = sorted.slice((page - 1) * limit, page * limit);
-  return { total, page, limit, pages, articles: slice.map(toPublic) };
+  return { total, page, limit, pages, articles };
 }
 
 async function getArticle(slug) {

@@ -142,13 +142,13 @@
   }
   function hideMsg(){ msgEl.classList.add("hidden"); }
   // Batch status box: every batch action writes here (success green, error
-  // red) and scrolls it into view, so a click never silently does nothing.
+  // red), so a click never silently does nothing. It never scrolls the
+  // page — the result is also shown inline where the user clicked.
   var statusEl = $("bStatus");
   function batchMsg(text, isErr){
     statusEl.textContent = text;
     statusEl.className = isErr ? "err" : "ok";
     statusEl.classList.remove("hidden");
-    try { statusEl.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch (e) {}
   }
   function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
   function api(path, opts){
@@ -388,9 +388,17 @@
         btns[i].addEventListener("click", function(){
           var btn = this;
           btn.disabled = true;
+          // Show the result inline in this batch row (the status box is
+          // updated too, but the page never scrolls).
+          var rowEl = btn.closest ? btn.closest(".batch-row") : null;
+          var catEl = rowEl ? rowEl.querySelector(".bcat") : null;
+          function setRowStatus(txt){
+            if (catEl) catEl.textContent = catEl.textContent.replace(/狀態：[^·]*/, "狀態：" + txt);
+          }
           batchMsg("查緊 batch 狀態…", false);
           batchApi("check", { batchId: btn.getAttribute("data-id") }).then(function(r){
             btn.disabled = false;
+            setRowStatus(r.batch.status);
             batchMsg(r.note || ("Batch 狀態：" + r.batch.status), false);
             loadBatches();
             loadReview();
@@ -398,6 +406,7 @@
             loadLogs();
           }).catch(function(e){
             btn.disabled = false;
+            setRowStatus("Check 失敗");
             batchMsg("Check 失敗：" + e.message, true);
           });
         });

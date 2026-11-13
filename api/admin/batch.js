@@ -370,7 +370,8 @@ async function checkBatch(body) {
   const done = job.done === true || ["succeeded", "failed", "cancelled", "expired"].includes(state);
   const now = new Date().toISOString();
   if (!done) {
-    await sbFetch(`image_batches?id=eq.${encodeURIComponent(batchId)}`, { method: "PATCH", body: { status: state, updated_at: now } });
+    // image_batches has no updated_at column (see sql/001-batch-tables.sql) — PATCH status only.
+    await sbFetch(`image_batches?id=eq.${encodeURIComponent(batchId)}`, { method: "PATCH", body: { status: state } });
     return { ok: true, batch: publicBatch({ ...batch, status: state }, items), items: items.map((it) => publicItem(it)), note: "batch still processing — check again later" };
   }
   if (state !== "succeeded") {
@@ -381,7 +382,7 @@ async function checkBatch(body) {
         it.status = "failed"; it.error = errMsg;
       }
     }
-    await sbFetch(`image_batches?id=eq.${encodeURIComponent(batchId)}`, { method: "PATCH", body: { status: state, updated_at: now } });
+    await sbFetch(`image_batches?id=eq.${encodeURIComponent(batchId)}`, { method: "PATCH", body: { status: state } });
     return { ok: true, batch: publicBatch({ ...batch, status: state }, items), items: items.map((it) => publicItem(it)), note: `batch ${state}` };
   }
   // Succeeded — download the results. Responses are in request order
@@ -435,7 +436,7 @@ async function checkBatch(body) {
     await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { status: "generated", staging_r2_key: out.key, updated_at: now } });
     results.push(publicItem({ ...it, status: "generated", staging_r2_key: out.key }));
   }
-  await sbFetch(`image_batches?id=eq.${encodeURIComponent(batchId)}`, { method: "PATCH", body: { status: "succeeded", updated_at: now } });
+  await sbFetch(`image_batches?id=eq.${encodeURIComponent(batchId)}`, { method: "PATCH", body: { status: "succeeded" } });
   const generated = results.filter((r) => r.status === "generated").length;
   const failed = results.filter((r) => r.status === "failed").length;
   return {

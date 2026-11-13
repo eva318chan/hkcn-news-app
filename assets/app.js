@@ -7,7 +7,6 @@ const CATS = {
   world:        {en:"World",        zh_hant:"國際",   zh_hans:"国际"},
   finance:      {en:"Finance",      zh_hant:"財經",   zh_hans:"财经"},
   tech:         {en:"Tech",         zh_hant:"科技",   zh_hans:"科技"},
-  society:      {en:"Society",      zh_hant:"社會",   zh_hans:"社会"},
   entertainment:{en:"Entertainment",zh_hant:"娛樂",   zh_hans:"娱乐"},
   others:       {en:"Others",       zh_hant:"其他",   zh_hans:"其他"}
 };

@@ -141,7 +141,15 @@ item already in a pending batch; a 5-minute cron then polls every pending
 auto batch, downloads finished images to R2 staging, and auto-approves
 each generated item (same copy to `design/<YYYYMM>/` + article link as
 the manual Approve button). Failures stay failed and are never
-auto-approved. Auto actions authenticate with `INGEST_SECRET`
+auto-approved. Automatic retries are capped at 3 attempts per article
+(user decision 2026-11-13: "重試 3 times only" — the first submission
+fails, then at most 2 more automatic submissions). auto-submit skips an
+article once it has 3 failed items, whether those failures came from
+auto batches or manual Generates; the skipped slugs and count are in the
+auto-submit response and in the batch log, so a parked article is
+visible, not silent. Manual Generate from the batch page is NOT capped —
+it is the escape hatch for a parked article (and if that manual attempt
+fails, it still counts toward the 3). Auto actions authenticate with `INGEST_SECRET`
 (`x-ingest-secret`), not Google SSO — a cron has no browser session —
 and only ever touch batches the auto flow created itself (`created_by`
 "auto"); manual batches stay fully manual (the user still checks and

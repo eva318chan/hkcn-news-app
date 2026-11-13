@@ -20,7 +20,15 @@
 //     stats         {}                           per-model generated + cost + model prices
 //     auto-submit   {}                           AUTO (INGEST_SECRET only): submit ONE Lite batch
 //                                                for all published articles with a prompt, no
-//                                                image and no pending batch item; no-op when none
+//                                                image and no pending batch item; no-op when none.
+//                                                RETRY CAP (user decision 2026-11-13: "重試 3
+//                                                times only" — first submission fails, then at
+//                                                most 2 more automatic submissions): an article
+//                                                is skipped once it has 3 failed items, so an
+//                                                article gets at most 3 total attempts (1 + 2
+//                                                retries). Skipped slugs are reported in the
+//                                                response and the batch log. Manual Generate is
+//                                                NOT capped — it is the escape hatch.
 //     auto-poll     {}                           AUTO (INGEST_SECRET only): poll every pending
 //                                                AUTO batch (created_by "auto"), download finished
 //                                                images to staging, auto-approve each generated
@@ -88,6 +96,32 @@ const TABLES_MISSING = "batch tables are not created yet — run sql/001-batch-t
 // checks and approves those in the admin.
 const AUTO_MODEL = "gemini-3.1-flash-lite-image";
 const AUTO_ACTOR = "auto";
+
+// Automatic retries are capped (user decision 2026-11-13: "重試 3 times
+// only", clarified: first submission fails, then at most 2 more automatic
+// submissions). So one article gets at most 3 total attempts in the auto
+// flow: failed 0 -> attempt 1, failed 1 -> retry 1, failed 2 -> retry 2,
+// failed 3 -> parked, never auto-submitted again. A failed item counts
+// toward the article's failed total whether it came from an auto batch or
+// a manual Generate (a manual attempt that fails still counts). Manual
+// Generate (create) is deliberately NOT capped — it is the escape hatch
+// for a parked article.
+const MAX_AUTO_ATTEMPTS = 3;
+
+// Split candidate slugs into those the auto flow may submit and those
+// parked by the retry cap. `failedCounts` is a Map slug -> number of
+// failed items for that article. Pure (no DB access) so it can be
+// unit-tested with fixtures — see the throwaway test, not committed.
+function applyRetryCap(slugs, failedCounts) {
+  const submit = [];
+  const capped = [];
+  for (const slug of slugs) {
+    const n = failedCounts.get(slug) || 0;
+    if (n >= MAX_AUTO_ATTEMPTS) capped.push({ slug, failed: n });
+    else submit.push(slug);
+  }
+  return { submit, capped };
+}
 
 function isAutoAuth(req) {
   const secret = process.env.INGEST_SECRET || "";
@@ -642,10 +676,14 @@ async function approveItems(body) {
 // Auto-submit (step 5F, called by the 2-hour pipeline after the prompts
 // are ingested): ONE Lite batch for every published article that has an
 // image_prompt, no image_url, and no item already submitted/generated in
-// any batch. Reuses createBatch (same validation, same Gemini call, same
-// DB rows) with created_by "auto", so the admin batch page shows the batch
-// and its cost exactly like a manual one. Returns ok with submitted 0
-// when there is nothing to do — no Gemini call, no batch row.
+// any batch. RETRY CAP: an article with 3 failed items is skipped (1
+// initial attempt + at most 2 automatic retries — user decision
+// 2026-11-13); skipped slugs are listed in the response and the batch
+// log. Manual Generate is NOT capped. Reuses createBatch (same validation,
+// same Gemini call, same DB rows) with created_by "auto", so the admin
+// batch page shows the batch and its cost exactly like a manual one.
+// Returns ok with submitted 0 when there is nothing to do — no Gemini
+// call, no batch row.
 // A concurrent state change (an article gaining an image between the
 // filter and the create) makes createBatch reject the whole selection;
 // in that case the bad slugs are dropped and the rest is retried once.
@@ -666,7 +704,32 @@ async function autoSubmit() {
   const pending = await sbRows("image_batch_items?select=article_slug&status=in.(submitted,generated)&limit=1000");
   const pendingSlugs = new Set(pending.map((p) => p.article_slug));
   let slugs = candidates.filter((s) => !pendingSlugs.has(s));
-  if (!slugs.length) return { ok: true, submitted: 0, batch: null, cost_usd: 0, note: "all prompted articles are already in a pending batch" };
+  // Retry cap (see MAX_AUTO_ATTEMPTS): skip any article that already has
+  // 3 failed items — it has had its 1 attempt + 2 automatic retries and is
+  // parked. Failed items are counted whether they came from auto batches
+  // or manual Generates. One query for all failed slugs (no per-article
+  // IN list, so a long candidate list cannot blow up the URL); the
+  // failed-items table is small (the auto flow started 2026-11-13) and
+  // 1000 rows is far above its size — page this if it ever grows.
+  let capped = [];
+  if (slugs.length) {
+    const failed = await sbRows("image_batch_items?select=article_slug&status=eq.failed&limit=1000");
+    const counts = new Map();
+    for (const it of failed) counts.set(it.article_slug, (counts.get(it.article_slug) || 0) + 1);
+    const split = applyRetryCap(slugs, counts);
+    slugs = split.submit;
+    capped = split.capped;
+  }
+  const cappedSlugs = capped.map((c) => c.slug);
+  if (!slugs.length) {
+    return {
+      ok: true, submitted: 0, batch: null, cost_usd: 0,
+      retry_capped: cappedSlugs, retry_capped_count: capped.length,
+      note: capped.length
+        ? `nothing to submit — ${capped.length} article(s) parked by the 3-attempt retry cap: ${cappedSlugs.join(", ")}`
+        : "all prompted articles are already in a pending batch",
+    };
+  }
   let out;
   try {
     out = await createBatch({ slugs, model: AUTO_MODEL }, AUTO_ACTOR);
@@ -692,7 +755,9 @@ async function autoSubmit() {
     ok: true, submitted: slugs.length, batch: out.batch,
     gemini_batch_name: out.gemini_batch_name, model: AUTO_MODEL,
     cost_usd: round2(slugs.length * price),
-    note: `submitted ${slugs.length} article(s) to Gemini (${AUTO_MODEL})`,
+    retry_capped: cappedSlugs, retry_capped_count: capped.length,
+    note: `submitted ${slugs.length} article(s) to Gemini (${AUTO_MODEL})`
+      + (capped.length ? `; ${capped.length} parked by the 3-attempt retry cap: ${cappedSlugs.join(", ")}` : ""),
   };
 }
 
@@ -937,8 +1002,13 @@ function summarize(action, body, out) {
       return { batchId: out.gemini_batch_name || out.batch.id, detail: `model=${out.batch.model}, articles=${out.batch.article_count}` };
     }
     if (action === "auto-submit" && out) {
-      if (out.batch) return { batchId: out.gemini_batch_name || out.batch.id, detail: `model=${out.model || AUTO_MODEL}, articles=${out.submitted || 0}, cost=$${Number(out.cost_usd || 0).toFixed(2)}` };
-      return { batchId: null, detail: out.note || "nothing to submit" };
+      // The retry cap must be visible in the log, not silent: a parked
+      // article stops being retried, and the log is where the user sees why.
+      // The slugs are already in out.note; only the count is appended here
+      // so the detail does not list them twice.
+      const capped = out.retry_capped_count ? `, retry-capped=${out.retry_capped_count}` : "";
+      if (out.batch) return { batchId: out.gemini_batch_name || out.batch.id, detail: `model=${out.model || AUTO_MODEL}, articles=${out.submitted || 0}, cost=$${Number(out.cost_usd || 0).toFixed(2)}${capped}`.slice(0, 500) };
+      return { batchId: null, detail: `${out.note || "nothing to submit"}${capped}`.slice(0, 500) };
     }
     if (action === "auto-poll" && out) {
       let detail = `checked=${out.checked || 0}, approved=${out.approved || 0}, failed=${out.failed || 0}, skipped=${out.skipped || 0}`;
@@ -1060,3 +1130,5 @@ module.exports.extractInlineImage = extractInlineImage;
 module.exports.geminiState = geminiState;
 module.exports.resultKey = resultKey;
 module.exports.indexResultsByKey = indexResultsByKey;
+module.exports.applyRetryCap = applyRetryCap;
+module.exports.MAX_AUTO_ATTEMPTS = MAX_AUTO_ATTEMPTS;

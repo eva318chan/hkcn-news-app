@@ -102,17 +102,13 @@
       <div class="batch-filters">
         <label>由 <input type="date" id="bFrom"></label>
         <label>至 <input type="date" id="bTo"></label>
-        <select id="bImageFilter">
-          <option value="without">未有圖</option>
-          <option value="all">全部（有圖／冇圖）</option>
-        </select>
         <button class="abtn" id="bLoadBtn" type="button">載入新聞</button>
         <span class="muted" id="bCount"></span>
       </div>
       <div id="bList"><p class="muted">載入中…</p></div>
 
       <h2>揀模型</h2>
-      <p class="muted">模型清單預先顯示（每個模型嘅 batch 價錢），預設揀 Flash Image，可以改。生成會收費（batch 價，見上面用量統計）。</p>
+      <p class="muted">模型清單預先顯示（每個模型嘅 batch 價錢），預設揀 Lite（最平，$0.0168 / 張），可以改。生成會收費（batch 價，見上面用量統計）。</p>
       <div class="model-pick" id="bModels"><span class="muted">載入模型價錢中…</span></div>
       <div class="admin-bar">
         <button class="abtn primary" id="bGenBtn" type="button">Generate（生成）</button>
@@ -208,12 +204,18 @@
   });
 
   // ---- Batch images (Gemini Batch API, POC) ----
-  // Single-click Generate: the model picker is shown by default (Flash
-  // Image pre-selected), so one click on Generate submits. Nothing
-  // auto-generates — the user controls every step.
+  // Single-click Generate: the model picker is shown by default (Lite
+  // pre-selected — the cheapest model, user decision 2026-11-13), so one
+  // click on Generate submits. Manual flow: the user controls every step.
+  // The fully automatic flow (step 5F + 5-minute cron) also writes its
+  // batches here, so this page shows auto batches and their spend too.
   var batchState = { articles: [], batches: [], stats: null, model: "" };
+  // True while any Check is in flight (manual or auto) — the 1-minute
+  // auto-check timer never fires while a manual Check is running.
+  var batchCheckRunning = false;
+  var AUTO_CHECK_MS = 60000; // auto-check pending batches every 1 minute
   var BATCH_MAX = 10; // suggestion only — the endpoint no longer hard-rejects above this
-  var DEFAULT_MODEL = "gemini-3.1-flash-image";
+  var DEFAULT_MODEL = "gemini-3.1-flash-lite-image";
 
   function batchApi(action, extra){
     var body = Object.assign({ action: action }, extra || {});
@@ -257,17 +259,20 @@
     var el = $("bModels");
     var models = batchState.stats && batchState.stats.models ? batchState.stats.models : [];
     if (!models.length){ el.innerHTML = "<span class=\"muted\">模型價錢載入失敗。</span>"; return; }
-    // Default to Flash Image (user decision 2026-11-13); fall back to the
-    // first model if Flash is not in the list.
+    // Default to Lite (user decision 2026-11-13 — cheapest); fall back to
+    // the first model if Lite is not in the list.
     if (!batchState.model){
-      var hasFlash = false;
-      for (var k = 0; k < models.length; k++) if (models[k].model === DEFAULT_MODEL) hasFlash = true;
-      batchState.model = hasFlash ? DEFAULT_MODEL : models[0].model;
+      var hasDefault = false;
+      for (var k = 0; k < models.length; k++) if (models[k].model === DEFAULT_MODEL) hasDefault = true;
+      batchState.model = hasDefault ? DEFAULT_MODEL : models[0].model;
     }
     el.innerHTML = models.map(function(m){
       var checked = m.model === batchState.model ? " checked" : "";
+      // Lite's label is fixed so it always reads exactly
+      // "Lite (Nano Banana 2 Lite) — $0.0168 / 張（batch 價）".
+      var label = m.model === "gemini-3.1-flash-lite-image" ? "Lite (Nano Banana 2 Lite)" : (m.display_name || m.model);
       return "<label><input type=\"radio\" name=\"bModel\" value=\"" + esc(m.model) + "\"" + checked + "> "
-        + esc(m.display_name || m.model) + " — " + fmtUsd(m.batch_price_usd) + " / 張（batch 價）</label>";
+        + esc(label) + " — " + fmtUsd(m.batch_price_usd) + " / 張（batch 價）</label>";
     }).join("");
     var radios = el.querySelectorAll("input[name=bModel]");
     for (var i = 0; i < radios.length; i++){
@@ -288,7 +293,10 @@
 
   function loadBatchArticles(){
     var from = $("bFrom").value, to = $("bTo").value;
-    var image = $("bImageFilter").value;
+    // Always "without": the list only ever shows eligible articles
+    // (imageless, no pending batch) — the server enforces it, and the
+    // "all" filter option was removed (it could never show anything extra).
+    var image = "without";
     $("bList").innerHTML = "<p class=\"muted\">載入中…</p>";
     batchApi("list-articles", { dateFrom: from, dateTo: to, image: image }).then(function(r){
       batchState.articles = r.articles || [];
@@ -363,6 +371,9 @@
     batchMsg("提交緊 batch…（" + slugs.length + " 篇，" + batchState.model + "）", false);
     batchApi("create", { slugs: slugs, model: batchState.model }).then(function(r){
       btn.disabled = false;
+      // Clear the selection: nothing stays checked after a successful submit.
+      var boxes = document.querySelectorAll("#bList .bSel");
+      for (var i = 0; i < boxes.length; i++) boxes[i].checked = false;
       batchMsg("Batch 已建立：Gemini batch " + r.gemini_batch_name + "（" + r.batch.model + "，共 " + r.batch.article_count + " 篇）。生圖要等一段時間，稍後用 Batch 列表嘅 Check 掣查狀態。", false);
       loadBatchStats();
       loadBatches();
@@ -432,8 +443,10 @@
     for (var j = 0; j < btns.length; j++){
       btns[j].addEventListener("click", function(){
         var btn = this;
+        if (btn.disabled) return; // double-click guard: already running
         var batchId = btn.getAttribute("data-id");
         btn.disabled = true;
+        batchCheckRunning = true;
         // Show the result inline in this batch row (the status box is
         // updated too, but the page never scrolls).
         var rowEl = btn.closest ? btn.closest(".batch-row") : null;
@@ -444,6 +457,7 @@
         batchMsg("查緊 batch 狀態…", false);
         batchApi("check", { batchId: batchId }).then(function(r){
           btn.disabled = false;
+          batchCheckRunning = false;
           setRowStatus(r.batch.status);
           batchMsg(r.note || ("Batch 狀態：" + r.batch.status), false);
           loadBatches().then(function(){
@@ -457,6 +471,7 @@
           loadLogs();
         }).catch(function(e){
           btn.disabled = false;
+          batchCheckRunning = false;
           setRowStatus("Check 失敗");
           batchMsg("Check 失敗：" + e.message, true);
         });
@@ -532,6 +547,7 @@
         for (var i = 0; i < appBtns.length; i++){
           appBtns[i].addEventListener("click", function(){
             var btn = this;
+            if (btn.disabled) return; // double-click guard: already running
             btn.disabled = true;
             batchMsg("批准緊…", false);
             batchApi("approve", { itemIds: [btn.getAttribute("data-id")] }).then(function(r){
@@ -546,6 +562,7 @@
         for (var j = 0; j < rejBtns.length; j++){
           rejBtns[j].addEventListener("click", function(){
             var btn = this;
+            if (btn.disabled) return; // double-click guard: already running
             if (!confirm("確定要拒絕呢張圖？Staging 嘅圖會保留，可以再睇，唔會連結返原文。")) return;
             btn.disabled = true;
             batchMsg("拒絕緊…", false);
@@ -558,6 +575,7 @@
           });
         }
         $("bApproveAll").addEventListener("click", function(){
+          if (this.disabled) return; // double-click guard: already running
           if (!confirm("一次過批准 " + items.length + " 張圖？圖會上 R2 並連結返原文。")) return;
           setReviewButtonsDisabled(true);
           batchMsg("一次過批准緊 " + items.length + " 張圖…", false);
@@ -567,6 +585,7 @@
           });
         });
         $("bRejectAll").addEventListener("click", function(){
+          if (this.disabled) return; // double-click guard: already running
           if (!confirm("一次過拒絕 " + items.length + " 張圖？Staging 嘅圖會保留，可以再睇，唔會連結返原文。")) return;
           setReviewButtonsDisabled(true);
           batchMsg("一次過拒絕緊 " + items.length + " 張圖…", false);
@@ -621,12 +640,37 @@
     });
   }
 
+  // Auto-check pending batches every 1 minute (user decision 2026-11-13):
+  // calls the same Check the admin button does, for pending batches only,
+  // so generated images appear in the review list without clicking Check.
+  // Skips when the page is hidden, and never runs while a manual Check is
+  // already in flight. Silent — it just refreshes the lists; a failure
+  // retries next minute.
+  function autoCheckPending(){
+    if (batchCheckRunning) return;
+    if (document.hidden) return;
+    var pending = (batchState.batches || []).filter(function(b){
+      return b.status === "pending" || b.status === "running" || b.status === "submitted";
+    });
+    if (!pending.length) return;
+    batchCheckRunning = true;
+    var chain = Promise.resolve();
+    pending.forEach(function(b){
+      chain = chain.then(function(){
+        return batchApi("check", { batchId: b.id }).catch(function(){ /* retry next minute */ });
+      });
+    });
+    chain.then(function(){
+      batchCheckRunning = false;
+      loadBatches(); loadReview(); loadBatchStats(); loadLogs();
+    });
+  }
+
   function initBatchUI(){
     var today = hktTodayStr();
     $("bFrom").value = today;
     $("bTo").value = today;
     $("bLoadBtn").addEventListener("click", loadBatchArticles);
-    $("bImageFilter").addEventListener("change", loadBatchArticles);
     $("bGenBtn").addEventListener("click", doGenerate);
     $("bLogRefreshBtn").addEventListener("click", loadLogs);
     loadBatchStats();
@@ -634,6 +678,8 @@
     loadReview();
     loadLogs();
     loadBatchArticles();
+    // Auto-check pending batches every 1 minute (see autoCheckPending).
+    setInterval(autoCheckPending, AUTO_CHECK_MS);
   }
 
   // Boot: check config, then check whether already signed in.

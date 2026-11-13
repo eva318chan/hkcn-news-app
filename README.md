@@ -150,11 +150,24 @@ go live without a human eyeball check. Batches and per-model spend show
 on the batch page exactly like manual ones (the stats area counts every
 generated image, auto or manual).
 
+**Batch page behaviour (2026-11-13).** The model picker defaults to Lite
+(Nano Banana 2 Lite) — $0.0168 / 張（batch 價）, the cheapest. The article
+list only ever shows articles that can actually be generated: imageless
+with no pending batch, or imageless whose batch was rejected (so they can
+be re-submitted); articles with an image or in a pending batch never
+appear (enforced server-side in `list-articles`, whatever the filter
+says). After a successful Generate all checkboxes are cleared. Pending
+batches are auto-checked every 1 minute (the same Check as the button,
+silent; skipped while the page is hidden or a manual Check is running),
+so generated images appear in the review list without clicking Check.
+Approve / Reject / 全部批准 / 全部拒絕 buttons disable while their
+backend call runs, so a double-click cannot submit twice.
+
 Flow: article list (date range, default today; "without image" default;
 each row is checkbox + category + title + a labelled `圖片 prompt`
 textarea — edits save on blur via the existing articles PATCH) → the
 model picker is shown by default (Lite / Flash Image / Pro Image, each
-with its batch price), Flash Image pre-selected; one click on Generate
+with its batch price), Lite pre-selected; one click on Generate
 submits → the BatchID list shows each batch with a Check button → Check
 downloads the results to R2 staging
 (`staging/design/<batch-id>/<slug>.jpg`) → the review list shows each

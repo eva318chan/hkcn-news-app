@@ -336,11 +336,30 @@ async function listArticles(body) {
   if (image === "without") params.set("or", "(image_url.is.null,image_url.eq.)");
   params.set("order", "published_at.desc,slug.asc");
   params.set("limit", String(limit));
-  const { json, headers } = await sbFetch(`articles?${params.toString()}`, { prefer: "count=exact" });
+  const { json } = await sbFetch(`articles?${params.toString()}`, { prefer: "count=exact" });
   const rows = Array.isArray(json) ? json : [];
+  // Eligibility (user decision 2026-11-13): the article list only ever
+  // shows articles that can actually be generated — imageless AND with no
+  // pending batch item (status submitted/generated). An article that
+  // already has an image is never shown (whatever the `image` filter
+  // says), and neither is one already in a pending batch, so it can never
+  // be submitted twice. An imageless article whose batch was rejected (or
+  // failed — nothing usable was produced) shows again so it can be
+  // re-submitted. `total` is the eligible count, so the page's
+  // "共 N 篇（總數 M）" stays consistent.
+  let eligible = rows.filter((a) => !(a.image_url || "").trim());
+  const slugs = eligible.map((a) => a.slug);
+  if (slugs.length) {
+    const items = await sbRows(`image_batch_items?select=article_slug,status&article_slug=in.(${slugs.map(encodeURIComponent).join(",")})&limit=1000`);
+    const pending = new Set();
+    for (const it of items) {
+      if (it.status === "submitted" || it.status === "generated") pending.add(it.article_slug);
+    }
+    eligible = eligible.filter((a) => !pending.has(a.slug));
+  }
   return {
-    ok: true, dateFrom, dateTo, image, total: totalFromHeaders(headers) ?? rows.length,
-    articles: rows.map((a) => ({
+    ok: true, dateFrom, dateTo, image, total: eligible.length,
+    articles: eligible.map((a) => ({
       slug: a.slug, category: a.category, published_at: a.published_at,
       image_url: a.image_url || null, image_prompt: a.image_prompt || null,
       title_zh_hant: a.title_zh_hant || "", title_en: a.title_en || "",

@@ -43,10 +43,14 @@
 //             a real operation): response.inlinedResponses is an OBJECT
 //             {"inlinedResponses": [...]}, not a flat array, and
 //             metadata.output.inlinedResponses has the identical shape —
-//             see unwrapInlinedResponses(). Responses are in request order
-//             (metadata.key is the slug, kept for traceability). A finished
-//             batch does NOT guarantee a usable image for every request —
-//             per-item failures are recorded.
+//             see unwrapInlinedResponses(). Results are keyed by
+//             metadata.key (the slug) and are NOT in request order
+//             (verified 2026-11-13: a 10-article batch came back shuffled,
+//             and a position zip wrote the wrong image into 2 of 10 staging
+//             files) — results must be matched to items BY KEY, never by
+//             position; see indexResultsByKey(). A finished batch does NOT
+//             guarantee a usable image for every request — per-item failures
+//             are recorded.
 //   Batch price is half of standard (Lite ~$0.017, Flash 1K ~$0.034,
 //   Pro 1K/2K ~$0.067 per image). Target turnaround is up to 24h.
 "use strict";
@@ -413,6 +417,32 @@ function extractInlineImage(inline) {
     : "model returned no image" };
 }
 
+// The key (article slug) for one inlined batch result. Gemini keys every
+// result by metadata.key — the key submitted with its request (see
+// geminiCreateBatch). Returns null when the result carries no key; such a
+// result cannot be attributed to any article and must never be used to
+// write a file.
+function resultKey(inline) {
+  if (!inline || typeof inline !== "object") return null;
+  const m = inline.metadata;
+  if (m && typeof m.key === "string" && m.key) return m.key;
+  if (typeof inline.key === "string" && inline.key) return inline.key;
+  return null;
+}
+
+// Index unwrapped results by their metadata.key (slug). The two locations
+// (response / metadata.output) carry the same list, so a key seen twice is
+// the same result — first occurrence wins. A result without a key is left
+// out: it cannot be matched to an article, so it is never written anywhere.
+function indexResultsByKey(responses) {
+  const byKey = new Map();
+  for (const r of responses || []) {
+    const k = resultKey(r);
+    if (k && !byKey.has(k)) byKey.set(k, r);
+  }
+  return byKey;
+}
+
 async function checkBatch(body) {
   const batchId = String(body.batchId || "").trim();
   if (!batchId) throw err(400, "missing batchId");
@@ -424,8 +454,8 @@ async function checkBatch(body) {
   // Sweep stale errors first: an item that already generated/approved must
   // not keep an error from an earlier failed Check (user report 2026-11-13:
   // generated items still showed "batch batch_state_succeeded" in red).
-  // Runs before the already-complete early return, so a Check on a
-  // finished batch still heals its rows.
+  // Runs on every Check, so a re-Check on a finished batch still heals
+  // its rows.
   for (const it of items) {
     if ((it.status === "generated" || it.status === "approved") && it.error) {
       await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { error: null, updated_at: now } });
@@ -435,12 +465,12 @@ async function checkBatch(body) {
   // "failed" is deliberately NOT terminal here: a failed item is retried
   // on the next Check (it re-reads the same inlined response, so a
   // genuinely-failed item just fails again with its real reason).
-  const settled = new Set(["generated", "approved", "rejected"]);
-  // Already finished and every item settled — return the stored state without
-  // calling Gemini again (re-downloading would re-upload the same images).
-  if (batch.status === "succeeded" && items.length && items.every((it) => settled.has(it.status))) {
-    return { ok: true, batch: publicBatch(batch, items), items: items.map((it) => publicItem(it)), note: "already complete — stored result returned" };
-  }
+  // There is deliberately NO "already complete" early return here. A
+  // re-Check on a succeeded batch must re-download every generated item's
+  // image BY KEY and overwrite its staging file (idempotent): that is how
+  // a wrong staging file gets repaired without regenerating, and it is
+  // what makes two overlapping Checks safe — both write the same correct
+  // bytes to each key instead of racing a position zip.
   const job = await geminiGetBatch(batch.gemini_batch_name);
   const state = geminiState(job);
   const done = job.done === true || ["succeeded", "failed", "cancelled", "expired"].includes(state);
@@ -460,17 +490,31 @@ async function checkBatch(body) {
     await sbFetch(`image_batches?id=eq.${encodeURIComponent(batchId)}`, { method: "PATCH", body: { status: state } });
     return { ok: true, batch: publicBatch({ ...batch, status: state }, items), items: items.map((it) => publicItem(it)), note: `batch ${state}` };
   }
-  // Succeeded — download the results. Responses are in request order
-  // (inlinedResponses[i] is the result of the i-th submitted article).
+  // Succeeded — download the results, matched BY KEY (metadata.key is the
+  // article slug). Gemini does NOT return results in request order, so a
+  // position zip (responses[i] for items[i]) writes the wrong image into a
+  // file — verified 2026-11-13 on batch 33e28bac, where 2 of 10 staging
+  // files got another article's bytes. A result with no key, or no result
+  // for an item's slug, marks that item failed with a clear error — never
+  // silently write another item's bytes to its file.
+  // Re-downloads are idempotent: "generated" items are re-downloaded by key
+  // and their staging file overwritten, so a re-Check repairs a wrong file
+  // instead of leaving it in place. Skip only "approved" (already published,
+  // staging deleted) and "rejected" (user decision).
   if (!r2Configured()) throw err(503, "R2 credentials not configured — cannot download batch results");
-  const responses = unwrapInlinedResponses(job);
+  const byKey = indexResultsByKey(unwrapInlinedResponses(job));
   const results = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    // Retry "submitted" AND "failed" items; skip only generated/approved/
-    // rejected (re-downloading those would re-upload the same images).
-    if (!["submitted", "failed"].includes(it.status)) { results.push(publicItem(it)); continue; }
-    const { image, failReason } = extractInlineImage(responses[i]);
+    if (!["submitted", "failed", "generated"].includes(it.status)) { results.push(publicItem(it)); continue; }
+    const inline = byKey.get(it.article_slug);
+    if (!inline) {
+      const reason = `no image result for this article in the batch response (key ${it.article_slug} not found)`;
+      await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { status: "failed", error: reason.slice(0, 500), updated_at: now } });
+      results.push(publicItem({ ...it, status: "failed", error: reason.slice(0, 500) }));
+      continue;
+    }
+    const { image, failReason } = extractInlineImage(inline);
     if (!image) {
       await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { status: "failed", error: failReason.slice(0, 500), updated_at: now } });
       results.push(publicItem({ ...it, status: "failed", error: failReason.slice(0, 500) }));
@@ -806,3 +850,5 @@ module.exports = async (req, res) => {
 module.exports.unwrapInlinedResponses = unwrapInlinedResponses;
 module.exports.extractInlineImage = extractInlineImage;
 module.exports.geminiState = geminiState;
+module.exports.resultKey = resultKey;
+module.exports.indexResultsByKey = indexResultsByKey;

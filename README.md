@@ -168,6 +168,15 @@ cleared (and any stale error is swept on the next Check or detail view),
 so a successful item never shows an old failure in red (user report
 2026-11-13).
 
+Check matches every result to its article BY KEY (`metadata.key` is the
+slug) — never by position, because Gemini does not return results in
+request order (verified 2026-11-13: a 10-article batch came back
+shuffled, and a position zip wrote the wrong image into 2 of 10 staging
+files). A re-Check on a finished batch re-downloads every generated
+item's image by key and overwrites its staging file, so it repairs a
+wrong file instead of leaving it in place; two overlapping Checks are
+safe for the same reason (both write the same correct bytes).
+
 Batch size is a recommendation, not a hard limit (user decision
 2026-11-13: "endpoint 放寬，warning 照去"): the page suggests ~10 per
 batch and warns above that, but the endpoint accepts whatever the user

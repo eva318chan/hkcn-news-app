@@ -11,6 +11,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 }[c]));
 
+const CATS_ZH = {hk:"港聞",china:"中國",world:"國際",finance:"財經",tech:"科技",entertainment:"娛樂",others:"其他"};
+
 const STANDARD_FOOTER = "摘要由本站重新編寫，圖片版權歸原新聞機構所有。";
 
 // published_at is an instant (Supabase renders timestamptz as UTC, seed rows
@@ -86,9 +88,10 @@ function pageHTML(a, base) {
   const zhSummary = a.summary.zh_hant || a.summary.en || "";
   const tags = (a.tags.zh_hant || []).map((g) => `<button class="tag">#${esc(g)}</button>`).join("");
   const url = `${base}/a/${a.id}.html`;
+  const catName = esc(CATS_ZH[a.category] || "其他");
   const img = a.image_url
-    ? `<div class="article-hero"><img src="${esc(a.image_url)}" alt="" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;noimg&quot;>🏅</div>'"></div>`
-    : `<div class="article-hero"><div class="noimg">🏅</div></div>`;
+    ? `<div class="article-hero"><img src="${esc(a.image_url)}" alt="" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;noimg&quot;>🏅</div>'"><span class="hero-badge">${catName}</span></div>`
+    : `<div class="article-hero"><div class="noimg">🏅</div><span class="hero-badge">${catName}</span></div>`;
   const caption = a.image_caption
     ? `<p style="font-size:13px;color:#888;margin:8px 0 0">${esc(a.image_caption)}</p>`
     : "";

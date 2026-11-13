@@ -129,10 +129,26 @@ navigation as "Batch images（批量生圖）", with a link back to
 the only image-generation path now. Step 5D (immediate Gemini image
 generation in the pipeline) is PAUSED (user decision 2026-11-13); the
 pipeline only prepares a Chinese prompt per SOP for each new imageless
-article (step 5E) and stores it in `image_prompt`. Nothing
-auto-generates, auto-checks or auto-publishes: the admin selects
-articles, clicks Generate, clicks Check, reviews the images and
+article (step 5E) and stores it in `image_prompt`. Manual flow: the admin
+selects articles, clicks Generate, clicks Check, reviews the images and
 approves — the user controls every step.
+
+**Fully automatic flow (2026-11-13, user decision: "全自動，連批准都自動").**
+The 2-hour pipeline's step 5F auto-submits ONE Gemini batch (model
+`gemini-3.1-flash-lite-image`, the cheapest at $0.0168/image batch) for
+every published article that has an `image_prompt`, no image yet, and no
+item already in a pending batch; a 5-minute cron then polls every pending
+auto batch, downloads finished images to R2 staging, and auto-approves
+each generated item (same copy to `design/<YYYYMM>/` + article link as
+the manual Approve button). Failures stay failed and are never
+auto-approved. Auto actions authenticate with `INGEST_SECRET`
+(`x-ingest-secret`), not Google SSO — a cron has no browser session —
+and only ever touch batches the auto flow created itself (`created_by`
+"auto"); manual batches stay fully manual (the user still checks and
+approves those in the admin). The user accepted that auto-approved images
+go live without a human eyeball check. Batches and per-model spend show
+on the batch page exactly like manual ones (the stats area counts every
+generated image, auto or manual).
 
 Flow: article list (date range, default today; "without image" default;
 each row is checkbox + category + title + a labelled `圖片 prompt`
@@ -188,15 +204,18 @@ when `GEMINI_API_KEY` was not yet in the live deployment).
 Logging (user request 2026-11-13: "add log"): every batch action is
 logged to console as one JSON line starting with `[batch]` (read it in
 Vercel → hkcn-news-app → Logs / Runtime Logs), and create / check /
-approve / reject are also written to the `batch_logs` table, shown on
+approve / reject / auto-submit / auto-poll are also written to the
+`batch_logs` table, shown on
 the batch page under "操作記錄 (Log)" (latest 50, newest first;
 successes and failures both). If the log table is not created yet, the
 section says so instead of failing.
 
-One endpoint, `POST /api/admin/batch` (Google SSO only, no
-`INGEST_SECRET`), with an `action` field: `list-articles`, `create`,
-`check`, `approve`, `reject`, `list-batches`, `list-items`, `list-logs`,
-`stats`. Batch price is half of standard (verified 2026-11-13: Lite
+One endpoint, `POST /api/admin/batch` (Google SSO for the manual
+actions; `INGEST_SECRET` for the two auto actions `auto-submit` and
+`auto-poll` only — auto auth never grants a manual action), with an
+`action` field: `list-articles`, `create`, `check`, `approve`, `reject`,
+`list-batches`, `list-items`, `list-logs`, `stats`, `auto-submit`,
+`auto-poll`. Batch price is half of standard (verified 2026-11-13: Lite
 ~$0.017, Flash 1K ~$0.034, Pro 1K/2K ~$0.067 per image). Prices live in
 `gemini_model_prices` (check weekly; a model with an unknown price is
 shown as "待確認", never guessed); the endpoint falls back to the verified
@@ -363,7 +382,7 @@ INGEST_SECRET=test-secret node scripts/serve.mjs 3100
 | `lib/admin-auth.js` | shared Google SSO session check for all `/api/admin/` routes |
 | `api/admin/config.js`, `api/admin/auth/callback.js` | admin sign-in: client-id config, ID-token exchange (logout is a branch of the callback — server-side cookie expiry) |
 | `api/admin/articles.js` | admin article list / get / create / edit / delete |
-| `api/admin/batch.js` | Gemini Batch API image generation (POC): create / check / approve / reject / list-batches / list-items / list-logs / stats, all behind one `action` field — the 12th function |
+| `api/admin/batch.js` | Gemini Batch API image generation (POC + fully automatic flow): create / check / approve / reject / list-batches / list-items / list-logs / stats / auto-submit / auto-poll, all behind one `action` field — the 12th function |
 | `data/seed.json`, `data/seed-meta.json` | migration snapshot (regenerate with `scripts/migrate.mjs`) |
 | `design/202611/*.jpg` | the 5 design images in R2 layout |
 | `scripts/migrate.mjs`, `scripts/serve.mjs` | migration + local dev server |

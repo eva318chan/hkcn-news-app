@@ -18,6 +18,13 @@
 //     list-items    { status, batchId }          batch items (the review list)
 //     list-logs     {}                           latest 50 batch_logs rows
 //     stats         {}                           per-model generated + cost + model prices
+//     auto-submit   {}                           AUTO (INGEST_SECRET only): submit ONE Lite batch
+//                                                for all published articles with a prompt, no
+//                                                image and no pending batch item; no-op when none
+//     auto-poll     {}                           AUTO (INGEST_SECRET only): poll every pending
+//                                                AUTO batch (created_by "auto"), download finished
+//                                                images to staging, auto-approve each generated
+//                                                item; failures stay failed, never approved
 //   Logging (user request 2026-11-13: "add log"): every action is logged to
 //   console as one JSON line (Vercel Runtime Logs), and create/check/
 //   approve/reject are also written to the batch_logs table
@@ -25,11 +32,17 @@
 //   Logging never fails the action — a missing batch_logs table is ignored.
 //   DB tables (sql/001-batch-tables.sql — run once in the Supabase SQL
 //   Editor): image_batches, image_batch_items, gemini_model_prices.
-//   Nothing here auto-generates, auto-checks or auto-publishes: the admin
-//   clicks Generate / Check / Approve for every step, and the user is the
-//   control for the whole flow (2026-11-13 decision). Step 5D (immediate
-//   image generation in the pipeline) is PAUSED — this batch flow is the
-//   only image-generation path now.
+//   Manual flow (admin page): the admin selects articles, clicks Generate,
+//   clicks Check, reviews the images and approves — the user controls every
+//   step. Fully automatic flow (user decision 2026-11-13: "全自動，連批准都
+//   自動"): the 2-hour pipeline (step 5F) calls auto-submit, and a 5-minute
+//   cron calls auto-poll; finished images are downloaded and auto-approved
+//   with no human eyeball check — the user accepted that risk. Step 5D
+//   (immediate image generation in the pipeline) stays PAUSED — the batch
+//   flow (manual + auto) is the only image-generation path now.
+//   Auto actions authenticate with INGEST_SECRET, not Google SSO (a cron
+//   has no browser session), and only ever touch batches the auto flow
+//   created itself (created_by "auto") — manual batches stay manual.
 //   Gemini Batch API (verified 2026-11-13 against ai.google.dev):
 //     create: POST /v1beta/models/{model}:batchGenerateContent
 //             { batch: { display_name, input_config: { requests: { requests:
@@ -54,6 +67,7 @@
 //   Batch price is half of standard (Lite ~$0.017, Flash 1K ~$0.034,
 //   Pro 1K/2K ~$0.067 per image). Target turnaround is up to 24h.
 "use strict";
+const crypto = require("crypto");
 const { requireAdmin } = require("../../lib/admin-auth");
 const { r2Configured, r2PublicBase, putObject, copyObject, deleteObject } = require("../../lib/r2");
 
@@ -62,6 +76,28 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const STAGING_PREFIX = "staging/design";
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const TABLES_MISSING = "batch tables are not created yet — run sql/001-batch-tables.sql in the Supabase SQL Editor, then try again";
+
+// Fully automatic flow (user decision 2026-11-13: "全自動，連批准都自動").
+// The 2-hour pipeline (step 5F) calls auto-submit; a 5-minute cron calls
+// auto-poll. A cron cannot use Google SSO, so the two auto actions
+// authenticate with INGEST_SECRET (x-ingest-secret, the same shared secret
+// as /api/ingest) instead — see isAutoAuth(). Auto auth grants ONLY the
+// two auto actions; every manual action still needs the Google SSO session.
+// Auto actions only ever touch batches the auto flow created itself
+// (created_by "auto"): manual batches stay fully manual — the user still
+// checks and approves those in the admin.
+const AUTO_MODEL = "gemini-3.1-flash-lite-image";
+const AUTO_ACTOR = "auto";
+
+function isAutoAuth(req) {
+  const secret = process.env.INGEST_SECRET || "";
+  if (!secret) return false;
+  const given = req.headers["x-ingest-secret"] || "";
+  if (!given) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(secret);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 // Verified 2026-11-13 (Google pricing page): batch price is half of standard.
 // Used when the gemini_model_prices table is empty or not yet created, so the
@@ -582,6 +618,125 @@ async function approveItems(body) {
   return { ok: true, results };
 }
 
+// ---- Fully automatic flow (step 5F + 5-minute poll) ----
+
+// Auto-submit (step 5F, called by the 2-hour pipeline after the prompts
+// are ingested): ONE Lite batch for every published article that has an
+// image_prompt, no image_url, and no item already submitted/generated in
+// any batch. Reuses createBatch (same validation, same Gemini call, same
+// DB rows) with created_by "auto", so the admin batch page shows the batch
+// and its cost exactly like a manual one. Returns ok with submitted 0
+// when there is nothing to do — no Gemini call, no batch row.
+// A concurrent state change (an article gaining an image between the
+// filter and the create) makes createBatch reject the whole selection;
+// in that case the bad slugs are dropped and the rest is retried once.
+async function autoSubmit() {
+  const params = new URLSearchParams();
+  params.set("select", "slug,image_url,image_prompt");
+  params.set("site", `eq.${SITE}`);
+  params.set("status", "eq.published");
+  params.set("image_prompt", "neq.");
+  params.set("or", "(image_url.is.null,image_url.eq.)");
+  params.set("order", "published_at.desc");
+  params.set("limit", "1000");
+  const rows = await sbRows(`articles?${params.toString()}`);
+  const candidates = rows
+    .filter((a) => (a.image_prompt || "").trim() && !(a.image_url || "").trim())
+    .map((a) => a.slug);
+  if (!candidates.length) return { ok: true, submitted: 0, batch: null, cost_usd: 0, note: "no articles need images" };
+  const pending = await sbRows("image_batch_items?select=article_slug&status=in.(submitted,generated)&limit=1000");
+  const pendingSlugs = new Set(pending.map((p) => p.article_slug));
+  let slugs = candidates.filter((s) => !pendingSlugs.has(s));
+  if (!slugs.length) return { ok: true, submitted: 0, batch: null, cost_usd: 0, note: "all prompted articles are already in a pending batch" };
+  let out;
+  try {
+    out = await createBatch({ slugs, model: AUTO_MODEL }, AUTO_ACTOR);
+  } catch (e) {
+    // Drop the slugs createBatch rejected and retry once with the rest.
+    const msg = String((e && e.message) || "");
+    const bad = new Set();
+    if (e && e.status === 400 && msg.includes("唔可以直接入 batch")) {
+      for (const line of msg.split("\n").slice(1)) {
+        const slug = line.split("：")[0].trim();
+        if (slug) bad.add(slug);
+      }
+    }
+    const rest = slugs.filter((s) => !bad.has(s));
+    if (!bad.size || !rest.length) throw e;
+    slugs = rest;
+    out = await createBatch({ slugs, model: AUTO_MODEL }, AUTO_ACTOR);
+  }
+  const { models } = await loadModels();
+  const m = models.find((x) => x.model === AUTO_MODEL);
+  const price = m ? Number(m.batch_price_usd) || 0 : 0.0168;
+  return {
+    ok: true, submitted: slugs.length, batch: out.batch,
+    gemini_batch_name: out.gemini_batch_name, model: AUTO_MODEL,
+    cost_usd: round2(slugs.length * price),
+    note: `submitted ${slugs.length} article(s) to Gemini (${AUTO_MODEL})`,
+  };
+}
+
+// Auto-poll (5-minute cron): poll every pending AUTO batch (created_by
+// "auto" — manual batches are never touched here), download finished
+// images to R2 staging via checkBatch (key-based matching, idempotent),
+// then auto-approve each generated item with approveItems (same copy to
+// design/ + article link as the manual Approve button). Failures stay
+// failed and are never approved. Also picks up auto batches that finished
+// but still have generated items (a previous poll downloaded them but the
+// approve step failed) — checkBatch re-downloads those by key and they
+// get approved here. An item whose approve errors (e.g. an overlapping
+// poll already approved it — approveItems re-checks status per item) is
+// counted as skipped, not as a failure of the run.
+// Two overlapping polls are safe: checkBatch writes the same correct bytes
+// per key, and approveItems refuses any item that is no longer "generated".
+async function autoPoll() {
+  const pending = await sbRows(`image_batches?select=id&created_by=eq.${AUTO_ACTOR}&status=in.(pending,running,submitted)&order=created_at.asc&limit=50`);
+  const genItems = await sbRows("image_batch_items?select=batch_id,image_batches(created_by)&status=eq.generated&limit=1000");
+  const ids = new Set(pending.map((b) => b.id));
+  for (const it of genItems) {
+    if (it.image_batches && it.image_batches.created_by === AUTO_ACTOR && it.batch_id) ids.add(it.batch_id);
+  }
+  if (!ids.size) return { ok: true, checked: 0, approved: 0, failed: 0, skipped: 0, batches: [], note: "no pending auto batches" };
+  const batchResults = [];
+  let approvedTotal = 0, failedTotal = 0, skippedTotal = 0;
+  for (const batchId of ids) {
+    try {
+      const checked = await checkBatch({ batchId });
+      const items = Array.isArray(checked.items) ? checked.items : [];
+      const gen = items.filter((i) => i.status === "generated");
+      const failed = items.filter((i) => i.status === "failed").length;
+      let approved = 0, skipped = 0;
+      if (gen.length) {
+        const appr = await approveItems({ itemIds: gen.map((i) => i.id) });
+        for (const r of appr.results || []) {
+          if (r.status === "approved") approved++;
+          else skipped++;
+        }
+      }
+      approvedTotal += approved; failedTotal += failed; skippedTotal += skipped;
+      batchResults.push({
+        batch_id: batchId,
+        gemini_batch_name: (checked.batch && checked.batch.gemini_batch_name) || null,
+        model: (checked.batch && checked.batch.model) || null,
+        state: (checked.batch && checked.batch.status) || null,
+        generated: gen.length, approved, failed, skipped,
+      });
+    } catch (e) {
+      batchResults.push({
+        batch_id: batchId, gemini_batch_name: null, model: null, state: "error",
+        generated: 0, approved: 0, failed: 0, skipped: 0,
+        error: String(e.message || e).slice(0, 200),
+      });
+    }
+  }
+  return {
+    ok: true, checked: ids.size, approved: approvedTotal,
+    failed: failedTotal, skipped: skippedTotal, batches: batchResults,
+    note: `checked ${ids.size} auto batch(es), approved ${approvedTotal} image(s), ${failedTotal} failed`,
+  };
+}
+
 async function rejectItems(body) {
   const ids = Array.isArray(body.itemIds)
     ? [...new Set(body.itemIds.map((s) => String(s).trim()).filter(Boolean))] : [];
@@ -734,7 +889,7 @@ function logLine({ actor, action, batchId, detail, ok, error }) {
   } catch (e) { /* logging must never break the action */ }
 }
 
-const DB_LOGGED_ACTIONS = new Set(["create", "check", "approve", "reject"]);
+const DB_LOGGED_ACTIONS = new Set(["create", "check", "approve", "reject", "auto-submit", "auto-poll"]);
 
 async function logDb(entry) {
   if (!DB_LOGGED_ACTIONS.has(entry.action)) return;
@@ -761,6 +916,16 @@ function summarize(action, body, out) {
   try {
     if (action === "create" && out && out.batch) {
       return { batchId: out.gemini_batch_name || out.batch.id, detail: `model=${out.batch.model}, articles=${out.batch.article_count}` };
+    }
+    if (action === "auto-submit" && out) {
+      if (out.batch) return { batchId: out.gemini_batch_name || out.batch.id, detail: `model=${out.model || AUTO_MODEL}, articles=${out.submitted || 0}, cost=$${Number(out.cost_usd || 0).toFixed(2)}` };
+      return { batchId: null, detail: out.note || "nothing to submit" };
+    }
+    if (action === "auto-poll" && out) {
+      let detail = `checked=${out.checked || 0}, approved=${out.approved || 0}, failed=${out.failed || 0}, skipped=${out.skipped || 0}`;
+      const errs = (out.batches || []).filter((b) => b.error).map((b) => `${b.gemini_batch_name || b.batch_id}: ${b.error}`);
+      if (errs.length) detail += `; errors: ${errs.join("; ")}`;
+      return { batchId: null, detail: detail.slice(0, 500) };
     }
     if (action === "check" && out && out.batch) {
       const c = out.batch.counts || {};
@@ -802,8 +967,18 @@ async function listLogs() {
 }
 
 module.exports = async (req, res) => {
-  const email = requireAdmin(req, res);
-  if (!email) return;
+  // Auth: Google SSO for the manual actions; INGEST_SECRET (x-ingest-secret)
+  // for the two auto actions only (a cron has no browser session). A request
+  // with a wrong secret and no session fails closed with 401 here; a request
+  // with a correct secret asking for a manual action is refused in the
+  // switch below — auto auth never grants manual actions.
+  const auto = isAutoAuth(req);
+  let email;
+  if (auto) email = AUTO_ACTOR;
+  else {
+    email = requireAdmin(req, res);
+    if (!email) return;
+  }
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     res.status(405).json({ ok: false, error: "method not allowed — POST { action } only" });
@@ -813,6 +988,14 @@ module.exports = async (req, res) => {
   try { body = await readBody(req); }
   catch (e) { res.status(400).json({ ok: false, error: "invalid JSON body" }); return; }
   const action = String((body && body.action) || "").trim();
+  // Auto auth (INGEST_SECRET) grants ONLY the two auto actions — a cron
+  // secret must never be able to run a manual action (approve / reject /
+  // create / check on an arbitrary batch). Manual actions need the Google
+  // SSO session, exactly as before.
+  if (auto && action !== "auto-submit" && action !== "auto-poll") {
+    res.status(401).json({ ok: false, error: "unauthorized: this action needs a Google admin session" });
+    return;
+  }
   try {
     let out;
     switch (action) {
@@ -825,9 +1008,15 @@ module.exports = async (req, res) => {
       case "list-items": out = await listItems(body); break;
       case "list-logs": out = await listLogs(); break;
       case "stats": out = await stats(); break;
+      case "auto-submit":
+        if (!auto) { res.status(401).json({ ok: false, error: "unauthorized: auto-submit needs x-ingest-secret" }); return; }
+        out = await autoSubmit(); break;
+      case "auto-poll":
+        if (!auto) { res.status(401).json({ ok: false, error: "unauthorized: auto-poll needs x-ingest-secret" }); return; }
+        out = await autoPoll(); break;
       default:
         await logAction({ actor: email, action: action || "(none)", ok: false, error: "unknown action" });
-        res.status(400).json({ ok: false, error: `unknown action: ${action || "(none)"} — use list-articles, create, check, approve, reject, list-batches, list-items, list-logs or stats` });
+        res.status(400).json({ ok: false, error: `unknown action: ${action || "(none)"} — use list-articles, create, check, approve, reject, list-batches, list-items, list-logs, stats, auto-submit or auto-poll` });
         return;
     }
     const s = summarize(action, body, out);

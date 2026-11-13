@@ -28,28 +28,12 @@
   .hidden{display:none!important}
   #msg{margin:12px 0;padding:10px 12px;border-radius:8px;background:#e3f2fd;color:#1565c0;font-size:14px}
   #msg.err{background:#fdecea;color:#b71c1c}
+  /* Admin nav: 文章管理 / Batch images. Shown in the topbar on both admin
+     pages so the user can switch between them with one click. */
+  .admin-nav{margin-left:auto;display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+  .admin-nav a{padding:8px 12px;border-radius:8px;font-size:14px;color:inherit;text-decoration:none;white-space:nowrap}
+  .admin-nav a.active{background:#e3f2fd;color:#1565c0;font-weight:700}
   .pager{display:flex;gap:10px;align-items:center;margin:16px 0}
-  /* Batch images (Gemini Batch API, POC) */
-  .batch-sec{border-top:2px solid #e5e5e5;margin-top:32px;padding-top:8px}
-  .batch-sec h2{font-size:18px;margin:24px 0 4px}
-  .batch-sec h3{font-size:15px;margin:20px 0 4px}
-  .batch-filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
-  .batch-filters input[type=date],.batch-filters select{padding:9px;font-size:15px;border:1px solid #ccc;border-radius:8px;background:var(--card,#fff);color:inherit}
-  .batch-row{display:flex;gap:10px;align-items:flex-start;border-bottom:1px solid #e5e5e5;padding:10px 0}
-  .batch-row input[type=checkbox]{margin-top:4px;flex:none}
-  .batch-row .bmeta{flex:1;min-width:0}
-  .batch-row .bcat{font-size:12px;color:#888;margin-bottom:2px}
-  .batch-row .btitle{font-size:14px;font-weight:600}
-  .batch-row textarea{width:100%;min-height:56px;margin-top:6px;padding:8px 10px;font-size:13px;border:1px solid #ccc;border-radius:8px;background:var(--card,#fff);color:inherit;box-sizing:border-box;resize:vertical}
-  .model-pick{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
-  .model-pick label{display:flex;gap:6px;align-items:center;border:1px solid #ccc;border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer}
-  .model-pick label input{margin:0}
-  .review-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;margin:12px 0}
-  .review-card{border:1px solid #e5e5e5;border-radius:10px;overflow:hidden}
-  .review-card img{width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:#f5f5f5}
-  .review-card .rbody{padding:10px}
-  .review-card .rtitle{font-size:13px;font-weight:600;margin-bottom:8px}
-  .review-card .rbtns{display:flex;gap:8px}
 </style>
 <script>try{var _t=localStorage.getItem("hks_theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=_t;}catch(e){}</script>
 <!-- Vercel Web Analytics: window.va stub + script. This is exactly what
@@ -67,6 +51,10 @@
     <img class="logo-img" src="../assets/logo-light.png" alt="中港新聞速報 HK-China News Express">
     <span class="brand-name"><strong>中港新聞速報</strong><small>HK-CHINA NEWS EXPRESS</small></span>
   </a>
+  <nav class="admin-nav" aria-label="管理選單">
+    <a href="/admin/" class="active">文章管理</a>
+    <a href="/admin/batch/">Batch images（批量生圖）</a>
+  </nav>
 </header>
 <main class="admin-wrap">
   <h1>文章管理</h1>
@@ -173,44 +161,6 @@
       </form>
     </div>
 
-    <!-- Batch images (Gemini Batch API, POC). The user selects articles,
-         picks a model, clicks Generate; Check downloads the results;
-         Approve/Reject moves each image to R2 or deletes it. Nothing
-         auto-generates, auto-checks or auto-publishes — the user controls
-         every step. Step 5D (immediate image generation in the pipeline)
-         is paused; this batch flow is the only image-generation path. -->
-    <section class="batch-sec" id="batchSec">
-      <h2>Batch images（批量生圖）</h2>
-      <p class="muted">用 Gemini Batch API 批量生成 AI 設計圖片。生圖前先睇清楚每篇嘅 prompt，改好先㩒 Generate。Batch 最多 10 篇，生成要等一段時間（最長 24 小時），Check 唔係即刻有圖。批咗嘅圖先會上 R2 並連結返原文。</p>
-      <div id="batchStats" class="muted">載入用量統計中…</div>
-
-      <h3>揀新聞</h3>
-      <div class="batch-filters">
-        <label>由 <input type="date" id="bFrom"></label>
-        <label>至 <input type="date" id="bTo"></label>
-        <select id="bImageFilter">
-          <option value="without">未有圖</option>
-          <option value="all">全部（有圖／冇圖）</option>
-        </select>
-        <button class="abtn" id="bLoadBtn" type="button">載入新聞</button>
-        <span class="muted" id="bCount"></span>
-      </div>
-      <div id="bList"><p class="muted">㩒「載入新聞」先睇到新聞。</p></div>
-
-      <h3>揀模型（Generate 嗰陣先揀）</h3>
-      <div class="muted" id="bModelHint">㩒 Generate 先顯示模型選擇（每個模型嘅 batch 價錢）。</div>
-      <div class="model-pick hidden" id="bModels"><span class="muted">載入模型價錢中…</span></div>
-      <div class="admin-bar">
-        <button class="abtn primary" id="bGenBtn" type="button">Generate（生成）</button>
-        <span class="muted" id="bGenMsg"></span>
-      </div>
-
-      <h3>Batch 列表</h3>
-      <div id="bBatches"><p class="muted">未有 batch。</p></div>
-
-      <h3>待審核（已生成，等你批）</h3>
-      <div id="bReview"><p class="muted">未有已生成嘅圖。</p></div>
-    </section>
   </div>
 </main>
 <script>
@@ -262,7 +212,6 @@
     $("adminBox").classList.remove("hidden");
     $("whoami").textContent = email ? ("已登入：" + email) : "";
     loadList();
-    initBatchUI();
   }
 
   // Admin list date is the Hong Kong publish date (published_at is an instant;
@@ -431,283 +380,6 @@
       .then(function(){ location.reload(); })
       .catch(function(e){ showMsg("登出失敗：" + e.message, true); });
   });
-
-  // ---- Batch images (Gemini Batch API, POC) ----
-  // Two-step Generate: click 1 shows the model picker (with batch prices),
-  // click 2 submits. Nothing auto-generates — the user controls every step.
-  var batchState = { articles: [], stats: null, model: "", confirming: false };
-  var BATCH_MAX = 10;
-
-  function batchApi(action, extra){
-    var body = Object.assign({ action: action }, extra || {});
-    return api("/api/admin/batch", { method: "POST", body: JSON.stringify(body) });
-  }
-
-  function hktTodayStr(){
-    return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
-  }
-
-  function fmtUsd(n){
-    if (n == null || isNaN(n)) return "待確認";
-    return "$" + Number(n).toFixed(4);
-  }
-
-  function batchArticleBySlug(slug){
-    for (var i = 0; i < batchState.articles.length; i++){
-      if (batchState.articles[i].slug === slug) return batchState.articles[i];
-    }
-    return null;
-  }
-
-  function renderBatchStats(){
-    var el = $("batchStats");
-    var s = batchState.stats;
-    if (!s){ el.textContent = "用量統計載入失敗。"; return; }
-    var html = "";
-    if (s.tablesMissing) html += "<p>⚠️ batch 資料表未建立（sql/001-batch-tables.sql 未跑）。以下只係模型價錢，未計用量。</p>";
-    html += "<table class=\"alist\"><thead><tr><th>模型</th><th>已生成</th><th>已批准</th><th>每張 batch 價</th><th>花費</th></tr></thead><tbody>";
-    s.stats.forEach(function(row){
-      html += "<tr><td>" + esc(row.display_name || row.model) + "</td><td>" + row.generated + "</td><td>" + row.approved + "</td><td>" + fmtUsd(row.batch_price_usd) + "</td><td>" + fmtUsd(row.cost_usd) + "</td></tr>";
-    });
-    html += "</tbody></table>";
-    html += "<p>總計：已生成 " + s.total.generated + " 張（已批准 " + s.total.approved + " 張），花費 " + fmtUsd(s.total.cost_usd) + "。"
-      + (s.price_source === "fallback" ? " 價錢係內置參考價（資料表未建立）。" : "")
-      + "「已生成」包括已批准同已拒絕嘅圖——成功出圖就要計錢。</p>";
-    el.innerHTML = html;
-  }
-
-  function renderModels(){
-    var el = $("bModels");
-    var models = batchState.stats && batchState.stats.models ? batchState.stats.models : [];
-    if (!models.length){ el.innerHTML = "<span class=\"muted\">模型價錢載入失敗。</span>"; return; }
-    if (!batchState.model) batchState.model = models[0].model;
-    el.innerHTML = models.map(function(m){
-      var checked = m.model === batchState.model ? " checked" : "";
-      return "<label><input type=\"radio\" name=\"bModel\" value=\"" + esc(m.model) + "\"" + checked + "> "
-        + esc(m.display_name || m.model) + " — " + fmtUsd(m.batch_price_usd) + " / 張（batch 價）</label>";
-    }).join("");
-    var radios = el.querySelectorAll("input[name=bModel]");
-    for (var i = 0; i < radios.length; i++){
-      radios[i].addEventListener("change", function(ev){ batchState.model = ev.target.value; });
-    }
-  }
-
-  function loadBatchStats(){
-    return batchApi("stats").then(function(s){
-      batchState.stats = s;
-      renderBatchStats();
-      renderModels();
-    }).catch(function(e){
-      $("batchStats").textContent = "用量統計載入失敗：" + e.message;
-      $("bModels").innerHTML = "<span class=\"muted\">模型價錢載入失敗。</span>";
-    });
-  }
-
-  function resetGenerateBtn(){
-    batchState.confirming = false;
-    $("bGenBtn").textContent = "Generate（生成）";
-    $("bGenMsg").textContent = "";
-    $("bModels").classList.add("hidden");
-    $("bModelHint").classList.remove("hidden");
-  }
-
-  function loadBatchArticles(){
-    resetGenerateBtn();
-    var from = $("bFrom").value, to = $("bTo").value;
-    var image = $("bImageFilter").value;
-    $("bList").innerHTML = "<p class=\"muted\">載入中…</p>";
-    batchApi("list-articles", { dateFrom: from, dateTo: to, image: image }).then(function(r){
-      batchState.articles = r.articles || [];
-      renderBatchArticles(r);
-    }).catch(function(e){
-      $("bList").innerHTML = "<p class=\"muted\">載入失敗：" + esc(e.message) + "</p>";
-    });
-  }
-
-  function renderBatchArticles(r){
-    var list = $("bList");
-    var n = batchState.articles.length;
-    $("bCount").textContent = "共 " + n + " 篇（總數 " + r.total + "）";
-    if (!n){
-      list.innerHTML = "<p class=\"muted\">呢段時間冇符合條件嘅新聞。</p>";
-      return;
-    }
-    var html = "";
-    batchState.articles.forEach(function(a){
-      var title = a.title_zh_hant || a.title_en || a.slug;
-      var hasPrompt = (a.image_prompt || "").trim().length > 0;
-      var hasImage = !!a.image_url;
-      html += "<div class=\"batch-row\">"
-        + "<input type=\"checkbox\" class=\"bSel\" data-slug=\"" + esc(a.slug) + "\"" + (hasImage ? " disabled" : "") + ">"
-        + "<div class=\"bmeta\">"
-        + "<div class=\"bcat\">" + esc(a.category || "") + " · " + esc(hktDate(a.published_at)) + (hasImage ? " · 已有圖" : "") + "</div>"
-        + "<div class=\"btitle\">" + esc(title) + "</div>"
-        + "<textarea class=\"bPrompt\" data-slug=\"" + esc(a.slug) + "\" placeholder=\"未有 prompt——請先喺呢度寫一個，或者等 pipeline 準備好 prompt。\">" + esc(a.image_prompt || "") + "</textarea>"
-        + (hasPrompt ? "" : "<div class=\"muted\">⚠️ 未有 prompt——Generate 會失敗，請先填好。</div>")
-        + "</div></div>";
-    });
-    list.innerHTML = html;
-    // Prompt edits save on blur via the existing admin articles PATCH.
-    var tas = list.querySelectorAll(".bPrompt");
-    for (var i = 0; i < tas.length; i++){
-      tas[i].addEventListener("change", function(){
-        var ta = this;
-        var slug = ta.getAttribute("data-slug");
-        var art = batchArticleBySlug(slug);
-        var orig = art ? (art.image_prompt || "") : "";
-        if (ta.value === orig) return;
-        api("/api/admin/articles/" + encodeURIComponent(slug), { method: "PATCH", body: JSON.stringify({ image_prompt: ta.value }) })
-          .then(function(){
-            if (art) art.image_prompt = ta.value;
-            showMsg("已儲存 " + slug + " 嘅 prompt。");
-          })
-          .catch(function(e){ showMsg("儲存 prompt 失敗：" + e.message, true); });
-      });
-    }
-  }
-
-  function selectedSlugs(){
-    var slugs = [];
-    var boxes = document.querySelectorAll("#bList .bSel:checked");
-    for (var i = 0; i < boxes.length; i++) slugs.push(boxes[i].getAttribute("data-slug"));
-    return slugs;
-  }
-
-  function doGenerate(){
-    var slugs = selectedSlugs();
-    if (!slugs.length){ showMsg("請先揀最少一篇新聞。", true); return; }
-    if (!batchState.confirming){
-      // Step 1: show the model picker beside Generate.
-      var models = batchState.stats && batchState.stats.models ? batchState.stats.models : [];
-      if (!models.length){ showMsg("模型價錢未載入，請稍後再試。", true); return; }
-      batchState.confirming = true;
-      $("bModelHint").classList.add("hidden");
-      $("bModels").classList.remove("hidden");
-      $("bGenBtn").textContent = "確認生成（Submit batch）";
-      $("bGenMsg").textContent = "揀個模型，再㩒一次確認生成。生成會收費（batch 價，見上面）。";
-      return;
-    }
-    // Step 2: confirm, then submit.
-    if (!batchState.model){ showMsg("請先揀一個模型。", true); return; }
-    if (slugs.length > BATCH_MAX){
-      if (!confirm("你揀咗 " + slugs.length + " 篇，超過建議嘅 " + BATCH_MAX + " 篇一批。Batch 太大會慢啲、貴啲，失敗嗰陣要成批重做。\n\n伺服器每批最多接受 " + BATCH_MAX + " 篇——㩒「確定」會照送出，伺服器會退回錯誤，請減少選擇；㩒「取消」返去減少選擇。")){
-        resetGenerateBtn();
-        return;
-      }
-    }
-    var btn = $("bGenBtn");
-    btn.disabled = true;
-    $("bGenMsg").textContent = "提交緊 batch…";
-    batchApi("create", { slugs: slugs, model: batchState.model }).then(function(r){
-      btn.disabled = false;
-      resetGenerateBtn();
-      showMsg("Batch 已建立：Gemini batch " + r.gemini_batch_name + "（" + r.batch.model + "，共 " + r.batch.article_count + " 篇）。生圖要等一段時間，稍後用 Batch 列表嘅 Check 掣查狀態。");
-      loadBatchStats();
-      loadBatches();
-      loadReview();
-    }).catch(function(e){
-      btn.disabled = false;
-      resetGenerateBtn();
-      showMsg("Generate 失敗：" + e.message, true);
-    });
-  }
-
-  function loadBatches(){
-    batchApi("list-batches", { limit: 20 }).then(function(r){
-      var el = $("bBatches");
-      if (!r.batches || !r.batches.length){ el.innerHTML = "<p class=\"muted\">未有 batch。</p>"; return; }
-      var html = "";
-      r.batches.forEach(function(b){
-        var c = b.counts || {};
-        html += "<div class=\"batch-row\"><div class=\"bmeta\">"
-          + "<div class=\"btitle\">" + esc(b.gemini_batch_name || b.id) + "</div>"
-          + "<div class=\"bcat\">" + esc(b.model) + " · 狀態：" + esc(b.status) + " · " + esc(b.created_at || "") + " · " + b.article_count + " 篇（已生成 " + (c.generated || 0) + " / 已批准 " + (c.approved || 0) + " / 失敗 " + (c.failed || 0) + "）</div>"
-          + "</div><button class=\"abtn bCheck\" type=\"button\" data-id=\"" + esc(b.id) + "\">Check</button></div>";
-      });
-      el.innerHTML = html;
-      var btns = el.querySelectorAll(".bCheck");
-      for (var i = 0; i < btns.length; i++){
-        btns[i].addEventListener("click", function(){
-          var btn = this;
-          btn.disabled = true;
-          batchApi("check", { batchId: btn.getAttribute("data-id") }).then(function(r){
-            btn.disabled = false;
-            showMsg(r.note || ("Batch 狀態：" + r.batch.status));
-            loadBatches();
-            loadReview();
-            loadBatchStats();
-          }).catch(function(e){
-            btn.disabled = false;
-            showMsg("Check 失敗：" + e.message, true);
-          });
-        });
-      }
-    }).catch(function(e){
-      $("bBatches").innerHTML = "<p class=\"muted\">載入失敗：" + esc(e.message) + "</p>";
-    });
-  }
-
-  function loadReview(){
-    batchApi("list-items", { status: "generated", limit: 50 }).then(function(r){
-      var el = $("bReview");
-      var items = r.items || [];
-      if (!items.length){ el.innerHTML = "<p class=\"muted\">未有已生成嘅圖。Check 咗 batch 之後，有圖會喺呢度出現。</p>"; return; }
-      var html = "<div class=\"review-grid\">";
-      items.forEach(function(it){
-        html += "<div class=\"review-card\">"
-          + (it.staging_url ? "<img src=\"" + esc(it.staging_url) + "\" alt=\"\">" : "<div class=\"muted\" style=\"padding:20px\">圖片載入唔到</div>")
-          + "<div class=\"rbody\"><div class=\"rtitle\">" + esc(it.title || it.article_slug) + "</div>"
-          + "<div class=\"bcat\">" + esc(it.model || "") + "</div>"
-          + "<div class=\"rbtns\"><button class=\"abtn primary bApprove\" type=\"button\" data-id=\"" + esc(it.id) + "\">Approve（批准）</button>"
-          + "<button class=\"abtn bReject\" type=\"button\" data-id=\"" + esc(it.id) + "\">Reject（拒絕）</button></div></div></div>";
-      });
-      html += "</div>";
-      el.innerHTML = html;
-      var appBtns = el.querySelectorAll(".bApprove");
-      for (var i = 0; i < appBtns.length; i++){
-        appBtns[i].addEventListener("click", function(){
-          var btn = this;
-          btn.disabled = true;
-          batchApi("approve", { itemIds: [btn.getAttribute("data-id")] }).then(function(r){
-            var res = r.results && r.results[0];
-            if (res && res.status === "approved") showMsg("已批准並上 R2：" + res.article_slug);
-            else showMsg("批准失敗：" + (res && res.error ? res.error : "unknown"), true);
-            loadReview(); loadBatches(); loadBatchStats();
-          }).catch(function(e){ btn.disabled = false; showMsg("批准失敗：" + e.message, true); });
-        });
-      }
-      var rejBtns = el.querySelectorAll(".bReject");
-      for (var j = 0; j < rejBtns.length; j++){
-        rejBtns[j].addEventListener("click", function(){
-          var btn = this;
-          if (!confirm("確定要拒絕呢張圖？Staging 嘅圖會刪除，唔會連結返原文。")) return;
-          btn.disabled = true;
-          batchApi("reject", { itemIds: [btn.getAttribute("data-id")] }).then(function(r){
-            var res = r.results && r.results[0];
-            if (res && res.status === "rejected") showMsg("已拒絕：" + res.article_slug);
-            else showMsg("拒絕失敗：" + (res && res.error ? res.error : "unknown"), true);
-            loadReview(); loadBatches(); loadBatchStats();
-          }).catch(function(e){ btn.disabled = false; showMsg("拒絕失敗：" + e.message, true); });
-        });
-      }
-    }).catch(function(e){
-      $("bReview").innerHTML = "<p class=\"muted\">載入失敗：" + esc(e.message) + "</p>";
-    });
-  }
-
-  function initBatchUI(){
-    if (!$("batchSec")) return;
-    var today = hktTodayStr();
-    $("bFrom").value = today;
-    $("bTo").value = today;
-    $("bLoadBtn").addEventListener("click", loadBatchArticles);
-    $("bImageFilter").addEventListener("change", loadBatchArticles);
-    $("bGenBtn").addEventListener("click", doGenerate);
-    loadBatchStats();
-    loadBatches();
-    loadReview();
-    loadBatchArticles();
-  }
 
   // Boot: check config, then check whether already signed in.
   api("/api/admin/config").then(function(cfg){

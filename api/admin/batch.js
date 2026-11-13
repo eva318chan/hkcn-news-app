@@ -7,13 +7,22 @@
 //   leaves the server and is never returned or logged.
 //   Actions (POST body { action, ... }):
 //     list-articles { dateFrom, dateTo, image }  articles in a date range
-//     create        { slugs, model }             submit a Gemini batch (max 10)
+//     create        { slugs, model }             submit a Gemini batch (no
+//                                                hard size limit — the page
+//                                                suggests ~10 and warns above
+//                                                that; user decision 2026-11-13)
 //     check         { batchId }                  poll Gemini; download results to R2 staging
 //     approve       { itemIds }                  copy staging image to design/ + link article
 //     reject        { itemIds }                  delete staging image, mark rejected
 //     list-batches  { page, limit }              batches + per-status counts
 //     list-items    { status, batchId }          batch items (the review list)
+//     list-logs     {}                           latest 50 batch_logs rows
 //     stats         {}                           per-model generated + cost + model prices
+//   Logging (user request 2026-11-13: "add log"): every action is logged to
+//   console as one JSON line (Vercel Runtime Logs), and create/check/
+//   approve/reject are also written to the batch_logs table
+//   (sql/002-batch-logs.sql) so the admin batch page can show them.
+//   Logging never fails the action — a missing batch_logs table is ignored.
 //   DB tables (sql/001-batch-tables.sql — run once in the Supabase SQL
 //   Editor): image_batches, image_batch_items, gemini_model_prices.
 //   Nothing here auto-generates, auto-checks or auto-publishes: the admin
@@ -39,7 +48,6 @@ const { requireAdmin } = require("../../lib/admin-auth");
 const { r2Configured, r2PublicBase, putObject, copyObject, deleteObject } = require("../../lib/r2");
 
 const SITE = "hkcn";
-const MAX_BATCH = 10;
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const STAGING_PREFIX = "staging/design";
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -289,9 +297,9 @@ async function createBatch(body, email) {
   const slugs = Array.isArray(body.slugs)
     ? [...new Set(body.slugs.map((s) => String(s).trim()).filter(Boolean))] : [];
   if (!slugs.length) throw err(400, "select at least one article");
-  if (slugs.length > MAX_BATCH) {
-    throw err(400, `最多 ${MAX_BATCH} 篇一批：你揀咗 ${slugs.length} 篇，請減少選擇後再試`);
-  }
+  // No hard size limit (user decision 2026-11-13: "endpoint 放寬，warning
+  // 照去"). The page suggests ~10 per batch and warns above that, but the
+  // endpoint accepts whatever the user confirms.
   const { models } = await loadModels();
   const model = String(body.model || "").trim();
   if (!models.some((m) => m.model === model)) {
@@ -592,6 +600,86 @@ async function stats() {
   };
 }
 
+// ---- Logging (user request 2026-11-13: "add log") ----
+// Every action is logged to console as one JSON line (Vercel Runtime Logs),
+// and create/check/approve/reject are also written to the batch_logs table
+// (sql/002-batch-logs.sql) so the admin batch page can show a persistent
+// log. Reads (list-articles / list-batches / list-items / stats /
+// list-logs) are console-only — logging every page load to the DB would
+// flood the table. Logging never fails the action: a missing batch_logs
+// table (SQL not run yet) or any insert error is swallowed after the
+// console line is written.
+
+function logLine({ actor, action, batchId, detail, ok, error }) {
+  try {
+    console.log("[batch] " + JSON.stringify({
+      ts: new Date().toISOString(), actor: actor || null, action,
+      batch_id: batchId || null, detail: detail || null, ok: !!ok,
+      error: error ? String(error).slice(0, 300) : null,
+    }));
+  } catch (e) { /* logging must never break the action */ }
+}
+
+const DB_LOGGED_ACTIONS = new Set(["create", "check", "approve", "reject"]);
+
+async function logDb(entry) {
+  if (!DB_LOGGED_ACTIONS.has(entry.action)) return;
+  try {
+    await sbFetch("batch_logs", {
+      method: "POST",
+      body: {
+        actor: entry.actor || null, action: entry.action,
+        batch_id: entry.batchId || null, detail: entry.detail || null,
+        ok: !!entry.ok, error: entry.error ? String(entry.error).slice(0, 500) : null,
+      },
+    });
+  } catch (e) { /* table missing (002 not run) or any insert error: ignore */ }
+}
+
+async function logAction(entry) {
+  logLine(entry);
+  await logDb(entry);
+}
+
+// One-line summary of an action result, for the log. Returns
+// { batchId, detail }.
+function summarize(action, body, out) {
+  try {
+    if (action === "create" && out && out.batch) {
+      return { batchId: out.gemini_batch_name || out.batch.id, detail: `model=${out.batch.model}, articles=${out.batch.article_count}` };
+    }
+    if (action === "check" && out && out.batch) {
+      const c = out.batch.counts || {};
+      return { batchId: String(body.batchId || ""), detail: `state=${out.batch.status}, generated=${c.generated || 0}, failed=${c.failed || 0}` };
+    }
+    if ((action === "approve" || action === "reject") && out && Array.isArray(out.results)) {
+      const done = out.results.filter((r) => r.status === "approved" || r.status === "rejected").length;
+      const errs = out.results.filter((r) => r.status === "error").length;
+      return { batchId: null, detail: `items=${out.results.length}, done=${done}, errors=${errs}` };
+    }
+  } catch (e) { /* fall through */ }
+  return { batchId: String(body.batchId || body.batch_id || "") || null, detail: null };
+}
+
+// Latest 50 log rows, newest first. If the batch_logs table does not exist
+// yet (sql/002-batch-logs.sql not run), return logsMissing instead of
+// failing — the page shows a clear message in that case.
+async function listLogs() {
+  try {
+    const rows = await sbRows("batch_logs?select=*&order=created_at.desc&limit=50");
+    return {
+      ok: true, logsMissing: false,
+      logs: rows.map((r) => ({
+        id: r.id, created_at: r.created_at, actor: r.actor, action: r.action,
+        batch_id: r.batch_id, detail: r.detail, ok: r.ok, error: r.error,
+      })),
+    };
+  } catch (e) {
+    if (isMissingTable(e)) return { ok: true, logsMissing: true, logs: [] };
+    throw e;
+  }
+}
+
 module.exports = async (req, res) => {
   const email = requireAdmin(req, res);
   if (!email) return;
@@ -614,18 +702,24 @@ module.exports = async (req, res) => {
       case "reject": out = await rejectItems(body); break;
       case "list-batches": out = await listBatches(body); break;
       case "list-items": out = await listItems(body); break;
+      case "list-logs": out = await listLogs(); break;
       case "stats": out = await stats(); break;
       default:
-        res.status(400).json({ ok: false, error: `unknown action: ${action || "(none)"} — use list-articles, create, check, approve, reject, list-batches, list-items or stats` });
+        await logAction({ actor: email, action: action || "(none)", ok: false, error: "unknown action" });
+        res.status(400).json({ ok: false, error: `unknown action: ${action || "(none)"} — use list-articles, create, check, approve, reject, list-batches, list-items, list-logs or stats` });
         return;
     }
+    const s = summarize(action, body, out);
+    await logAction({ actor: email, action, batchId: s.batchId, detail: s.detail, ok: true });
     res.status(200).json(out);
   } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 500);
+    await logAction({ actor: email, action, batchId: String(body.batchId || "") || null, detail: null, ok: false, error: msg });
     if (isMissingTable(e)) {
       res.status(503).json({ ok: false, error: TABLES_MISSING });
       return;
     }
     const status = (e && e.status) || 500;
-    res.status(status).json({ ok: false, error: String((e && e.message) || e).slice(0, 500) });
+    res.status(status).json({ ok: false, error: msg });
   }
 };

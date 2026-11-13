@@ -122,22 +122,25 @@ data; `/api/admin/articles` returns 401).
 mode filters drafts too), so setting an article to `draft` unpublishes it
 everywhere at once.
 
-**Batch images (POC, 2026-11-13).** The admin page has a "Batch images"
-section that generates AI design images with the Gemini Batch API — the
-only image-generation path now. Step 5D (immediate Gemini image generation
-in the pipeline) is PAUSED (user decision 2026-11-13); the pipeline only
-prepares a Chinese prompt per SOP for each new imageless article (step 5E)
-and stores it in `image_prompt`. Nothing auto-generates, auto-checks or
-auto-publishes: the admin selects articles, clicks Generate, clicks Check,
-reviews the images and approves — the user controls every step.
+**Batch images (POC, 2026-11-13).** The batch image function lives on its
+own page, `/admin/batch/` (linked from the main admin page's top
+navigation as "Batch images（批量生圖）", with a link back to
+`/admin/`), and generates AI design images with the Gemini Batch API —
+the only image-generation path now. Step 5D (immediate Gemini image
+generation in the pipeline) is PAUSED (user decision 2026-11-13); the
+pipeline only prepares a Chinese prompt per SOP for each new imageless
+article (step 5E) and stores it in `image_prompt`. Nothing
+auto-generates, auto-checks or auto-publishes: the admin selects
+articles, clicks Generate, clicks Check, reviews the images and
+approves — the user controls every step.
 
 Flow: article list (date range, default today; "without image" default;
-each row is checkbox + category + title + editable `image_prompt` textarea
-— edits save on blur via the existing articles PATCH) → Generate shows a
-model picker beside it (Lite / Flash Image / Pro Image, each with its batch
-price) → a second click submits the batch (max 10 articles; the endpoint
-rejects more than 10) → the BatchID list shows each batch with a Check
-button → Check downloads the results to R2 staging
+each row is checkbox + category + title + a labelled `圖片 prompt`
+textarea — edits save on blur via the existing articles PATCH) → the
+model picker is shown by default (Lite / Flash Image / Pro Image, each
+with its batch price), Flash Image pre-selected; one click on Generate
+submits → the BatchID list shows each batch with a Check button → Check
+downloads the results to R2 staging
 (`staging/design/<batch-id>/<slug>.jpg`) → the review list shows each
 generated image with its news title and Approve / Reject buttons →
 Approve copies the image to `design/<YYYYMM>/<slug>.jpg` in R2 and links
@@ -145,16 +148,33 @@ it to the article (`image_url` + `image_r2_key`); Reject deletes the
 staging copy. The usage-stats area shows per-model images generated so
 far + cost so far (generated × batch price) + total.
 
+Batch size is a recommendation, not a hard limit (user decision
+2026-11-13: "endpoint 放寬，warning 照去"): the page suggests ~10 per
+batch and warns above that, but the endpoint accepts whatever the user
+confirms. Every batch action shows a visible status message on the page
+(success green, error red, using the server's message) — a click never
+silently does nothing (2026-11-13 fix: Generate used to fail silently
+when `GEMINI_API_KEY` was not yet in the live deployment).
+
+Logging (user request 2026-11-13: "add log"): every batch action is
+logged to console as one JSON line starting with `[batch]` (read it in
+Vercel → hkcn-news-app → Logs / Runtime Logs), and create / check /
+approve / reject are also written to the `batch_logs` table, shown on
+the batch page under "操作記錄 (Log)" (latest 50, newest first;
+successes and failures both). If the log table is not created yet, the
+section says so instead of failing.
+
 One endpoint, `POST /api/admin/batch` (Google SSO only, no
 `INGEST_SECRET`), with an `action` field: `list-articles`, `create`,
-`check`, `approve`, `reject`, `list-batches`, `list-items`, `stats`.
-Batch price is half of standard (verified 2026-11-13: Lite ~$0.017, Flash
-1K ~$0.034, Pro 1K/2K ~$0.067 per image). Prices live in
+`check`, `approve`, `reject`, `list-batches`, `list-items`, `list-logs`,
+`stats`. Batch price is half of standard (verified 2026-11-13: Lite
+~$0.017, Flash 1K ~$0.034, Pro 1K/2K ~$0.067 per image). Prices live in
 `gemini_model_prices` (check weekly; a model with an unknown price is
 shown as "待確認", never guessed); the endpoint falls back to the verified
 prices above when the table is empty. DB tables
-(`sql/001-batch-tables.sql` — run once in the Supabase SQL Editor, it is
-idempotent): `image_batches`, `image_batch_items`, `gemini_model_prices`.
+(`sql/001-batch-tables.sql` and `sql/002-batch-logs.sql` — run once each
+in the Supabase SQL Editor, both are idempotent): `image_batches`,
+`image_batch_items`, `gemini_model_prices`, `batch_logs`.
 This endpoint is the 12th and last serverless function (Hobby limit 12) —
 no further endpoint can be added without merging or removing one.
 
@@ -314,7 +334,7 @@ INGEST_SECRET=test-secret node scripts/serve.mjs 3100
 | `lib/admin-auth.js` | shared Google SSO session check for all `/api/admin/` routes |
 | `api/admin/config.js`, `api/admin/auth/callback.js` | admin sign-in: client-id config, ID-token exchange (logout is a branch of the callback — server-side cookie expiry) |
 | `api/admin/articles.js` | admin article list / get / create / edit / delete |
-| `api/admin/batch.js` | Gemini Batch API image generation (POC): create / check / approve / reject / list-batches / list-items / stats, all behind one `action` field — the 12th function |
+| `api/admin/batch.js` | Gemini Batch API image generation (POC): create / check / approve / reject / list-batches / list-items / list-logs / stats, all behind one `action` field — the 12th function |
 | `data/seed.json`, `data/seed-meta.json` | migration snapshot (regenerate with `scripts/migrate.mjs`) |
 | `design/202611/*.jpg` | the 5 design images in R2 layout |
 | `scripts/migrate.mjs`, `scripts/serve.mjs` | migration + local dev server |

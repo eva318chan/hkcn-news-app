@@ -142,10 +142,17 @@ with its batch price), Flash Image pre-selected; one click on Generate
 submits → the BatchID list shows each batch with a Check button → Check
 downloads the results to R2 staging
 (`staging/design/<batch-id>/<slug>.jpg`) → the review list shows each
-generated image with its news title and Approve / Reject buttons →
-Approve copies the image to `design/<YYYYMM>/<slug>.jpg` in R2 and links
-it to the article (`image_url` + `image_r2_key`); Reject deletes the
-staging copy. The usage-stats area shows per-model images generated so
+generated image with its news title and Approve / Reject buttons, plus
+全部批准 (Approve All) and 全部拒絕 (Reject All) buttons above the list
+(each asks for confirmation with the count first, and both are disabled
+when nothing is generated; a bulk run loops the same per-item
+approve/reject calls, so each item is logged exactly as if clicked
+individually) → Approve copies the image to `design/<YYYYMM>/<slug>.jpg`
+in R2 and links it to the article (`image_url` + `image_r2_key`); Reject
+keeps the staging copy in R2 so the image stays viewable — rejected items
+remain listed in the batch 詳情 view and in a 已拒絕 section under the
+review list (user decision 2026-11-13, previously Reject deleted the
+staging copy). The usage-stats area shows per-model images generated so
 far + cost so far (generated × batch price) + total.
 
 Check reads Gemini's double-nested `inlinedResponses` (verified

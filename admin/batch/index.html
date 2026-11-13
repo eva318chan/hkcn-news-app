@@ -479,51 +479,116 @@
     });
   }
 
+  // Runs one bulk action (approve-all / reject-all) as a sequential loop of
+  // the existing per-item calls, so each item goes through exactly the same
+  // code path (and log entry) as clicking its own Approve / Reject button.
+  // Returns a promise of { done, failed }.
+  function runBulk(action, items){
+    var done = 0, failed = 0;
+    var chain = Promise.resolve();
+    items.forEach(function(it){
+      chain = chain.then(function(){
+        return batchApi(action, { itemIds: [it.id] }).then(function(r){
+          var res = r.results && r.results[0];
+          if (res && (res.status === "approved" || res.status === "rejected")) done++;
+          else failed++;
+        }).catch(function(){ failed++; });
+      });
+    });
+    return chain.then(function(){ return { done: done, failed: failed }; });
+  }
+
+  function setReviewButtonsDisabled(disabled){
+    var btns = $("bReview").querySelectorAll("button");
+    for (var i = 0; i < btns.length; i++) btns[i].disabled = disabled;
+  }
+
   function loadReview(){
+    var el = $("bReview");
     batchApi("list-items", { status: "generated", limit: 50 }).then(function(r){
-      var el = $("bReview");
       var items = r.items || [];
-      if (!items.length){ el.innerHTML = "<p class=\"muted\">未有已生成嘅圖。Check 咗 batch 之後，有圖會喺呢度出現。</p>"; return; }
-      var html = "<div class=\"review-grid\">";
-      items.forEach(function(it){
+      // Bulk buttons are always shown; disabled when there is nothing to act
+      // on, so a bulk approve/reject can never fire on an empty list.
+      var html = "<div class=\"admin-bar\"><button class=\"abtn primary\" id=\"bApproveAll\" type=\"button\"" + (items.length ? "" : " disabled") + ">全部批准</button>"
+        + "<button class=\"abtn\" id=\"bRejectAll\" type=\"button\"" + (items.length ? "" : " disabled") + ">全部拒絕</button>"
+        + "<span class=\"muted\">" + (items.length ? "一次過處理下面 " + items.length + " 張圖" : "未有已生成嘅圖") + "</span></div>";
+      if (!items.length){ el.innerHTML = html + "<p class=\"muted\">Check 咗 batch 之後，有圖會喺呢度出現。</p>"; }
+      else {
+        html += "<div class=\"review-grid\">";
+        items.forEach(function(it){
+          html += "<div class=\"review-card\">"
+            + (it.staging_url ? "<img src=\"" + esc(it.staging_url) + "\" alt=\"\">" : "<div class=\"muted\" style=\"padding:20px\">圖片載入唔到</div>")
+            + "<div class=\"rbody\"><div class=\"rtitle\">" + esc(it.title || it.article_slug) + "</div>"
+            + "<div class=\"bcat\">" + esc(it.model || "") + "</div>"
+            + "<div class=\"rbtns\"><button class=\"abtn primary bApprove\" type=\"button\" data-id=\"" + esc(it.id) + "\">Approve（批准）</button>"
+            + "<button class=\"abtn bReject\" type=\"button\" data-id=\"" + esc(it.id) + "\">Reject（拒絕）</button></div></div></div>";
+        });
+        html += "</div>";
+        el.innerHTML = html;
+        var appBtns = el.querySelectorAll(".bApprove");
+        for (var i = 0; i < appBtns.length; i++){
+          appBtns[i].addEventListener("click", function(){
+            var btn = this;
+            btn.disabled = true;
+            batchMsg("批准緊…", false);
+            batchApi("approve", { itemIds: [btn.getAttribute("data-id")] }).then(function(r){
+              var res = r.results && r.results[0];
+              if (res && res.status === "approved") batchMsg("已批准並上 R2：" + res.article_slug, false);
+              else batchMsg("批准失敗：" + (res && res.error ? res.error : "unknown"), true);
+              loadReview(); loadBatches(); loadBatchStats(); loadLogs();
+            }).catch(function(e){ btn.disabled = false; batchMsg("批准失敗：" + e.message, true); });
+          });
+        }
+        var rejBtns = el.querySelectorAll(".bReject");
+        for (var j = 0; j < rejBtns.length; j++){
+          rejBtns[j].addEventListener("click", function(){
+            var btn = this;
+            if (!confirm("確定要拒絕呢張圖？Staging 嘅圖會保留，可以再睇，唔會連結返原文。")) return;
+            btn.disabled = true;
+            batchMsg("拒絕緊…", false);
+            batchApi("reject", { itemIds: [btn.getAttribute("data-id")] }).then(function(r){
+              var res = r.results && r.results[0];
+              if (res && res.status === "rejected") batchMsg("已拒絕：" + res.article_slug, false);
+              else batchMsg("拒絕失敗：" + (res && res.error ? res.error : "unknown"), true);
+              loadReview(); loadBatches(); loadBatchStats(); loadLogs();
+            }).catch(function(e){ btn.disabled = false; batchMsg("拒絕失敗：" + e.message, true); });
+          });
+        }
+        $("bApproveAll").addEventListener("click", function(){
+          if (!confirm("一次過批准 " + items.length + " 張圖？圖會上 R2 並連結返原文。")) return;
+          setReviewButtonsDisabled(true);
+          batchMsg("一次過批准緊 " + items.length + " 張圖…", false);
+          runBulk("approve", items).then(function(c){
+            batchMsg("已批准 " + c.done + " 張" + (c.failed ? "，失敗 " + c.failed + " 張" : "") + "。", c.failed > 0);
+            loadReview(); loadBatches(); loadBatchStats(); loadLogs();
+          });
+        });
+        $("bRejectAll").addEventListener("click", function(){
+          if (!confirm("一次過拒絕 " + items.length + " 張圖？Staging 嘅圖會保留，可以再睇，唔會連結返原文。")) return;
+          setReviewButtonsDisabled(true);
+          batchMsg("一次過拒絕緊 " + items.length + " 張圖…", false);
+          runBulk("reject", items).then(function(c){
+            batchMsg("已拒絕 " + c.done + " 張" + (c.failed ? "，失敗 " + c.failed + " 張" : "") + "。", c.failed > 0);
+            loadReview(); loadBatches(); loadBatchStats(); loadLogs();
+          });
+        });
+      }
+      // Rejected items stay visible (staging is kept, user decision
+      // 2026-11-13): show them below the review list with their staging
+      // image + link, so they can still be opened and looked at.
+      return batchApi("list-items", { status: "rejected", limit: 50 }).catch(function(){ return { items: [] }; });
+    }).then(function(r){
+      var rej = r.items || [];
+      if (!rej.length) return;
+      var html = "<h3 style=\"margin-top:18px\">已拒絕（保留喺 staging，可再睇）</h3><div class=\"review-grid\">";
+      rej.forEach(function(it){
         html += "<div class=\"review-card\">"
-          + (it.staging_url ? "<img src=\"" + esc(it.staging_url) + "\" alt=\"\">" : "<div class=\"muted\" style=\"padding:20px\">圖片載入唔到</div>")
+          + (it.staging_url ? "<a href=\"" + esc(it.staging_url) + "\" target=\"_blank\" rel=\"noopener\"><img src=\"" + esc(it.staging_url) + "\" alt=\"\"></a>" : "<div class=\"muted\" style=\"padding:20px\">圖片載入唔到</div>")
           + "<div class=\"rbody\"><div class=\"rtitle\">" + esc(it.title || it.article_slug) + "</div>"
-          + "<div class=\"bcat\">" + esc(it.model || "") + "</div>"
-          + "<div class=\"rbtns\"><button class=\"abtn primary bApprove\" type=\"button\" data-id=\"" + esc(it.id) + "\">Approve（批准）</button>"
-          + "<button class=\"abtn bReject\" type=\"button\" data-id=\"" + esc(it.id) + "\">Reject（拒絕）</button></div></div></div>";
+          + "<div class=\"bcat\">" + esc(it.model || "") + " · 已拒絕</div></div></div>";
       });
       html += "</div>";
-      el.innerHTML = html;
-      var appBtns = el.querySelectorAll(".bApprove");
-      for (var i = 0; i < appBtns.length; i++){
-        appBtns[i].addEventListener("click", function(){
-          var btn = this;
-          btn.disabled = true;
-          batchMsg("批准緊…", false);
-          batchApi("approve", { itemIds: [btn.getAttribute("data-id")] }).then(function(r){
-            var res = r.results && r.results[0];
-            if (res && res.status === "approved") batchMsg("已批准並上 R2：" + res.article_slug, false);
-            else batchMsg("批准失敗：" + (res && res.error ? res.error : "unknown"), true);
-            loadReview(); loadBatches(); loadBatchStats(); loadLogs();
-          }).catch(function(e){ btn.disabled = false; batchMsg("批准失敗：" + e.message, true); });
-        });
-      }
-      var rejBtns = el.querySelectorAll(".bReject");
-      for (var j = 0; j < rejBtns.length; j++){
-        rejBtns[j].addEventListener("click", function(){
-          var btn = this;
-          if (!confirm("確定要拒絕呢張圖？Staging 嘅圖會刪除，唔會連結返原文。")) return;
-          btn.disabled = true;
-          batchMsg("拒絕緊…", false);
-          batchApi("reject", { itemIds: [btn.getAttribute("data-id")] }).then(function(r){
-            var res = r.results && r.results[0];
-            if (res && res.status === "rejected") batchMsg("已拒絕：" + res.article_slug, false);
-            else batchMsg("拒絕失敗：" + (res && res.error ? res.error : "unknown"), true);
-            loadReview(); loadBatches(); loadBatchStats(); loadLogs();
-          }).catch(function(e){ btn.disabled = false; batchMsg("拒絕失敗：" + e.message, true); });
-        });
-      }
+      el.insertAdjacentHTML("beforeend", html);
     }).catch(function(e){
       $("bReview").innerHTML = "<p class=\"muted\">載入失敗：" + esc(e.message) + "</p>";
       batchMsg("載入待審核失敗：" + e.message, true);

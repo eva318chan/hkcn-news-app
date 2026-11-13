@@ -13,7 +13,7 @@
 //                                                that; user decision 2026-11-13)
 //     check         { batchId }                  poll Gemini; download results to R2 staging
 //     approve       { itemIds }                  copy staging image to design/ + link article
-//     reject        { itemIds }                  delete staging image, mark rejected
+//     reject        { itemIds }                  mark rejected — staging image is KEPT in R2 so it stays viewable (user decision 2026-11-13)
 //     list-batches  { page, limit }              batches + per-status counts
 //     list-items    { status, batchId }          batch items (the review list)
 //     list-logs     {}                           latest 50 batch_logs rows
@@ -536,9 +536,9 @@ async function rejectItems(body) {
       const it = rows[0];
       if (!it) throw new Error("item not found");
       if (it.status !== "generated") throw new Error(`item is ${it.status}, not generated — nothing to reject`);
-      if (it.staging_r2_key && r2Configured()) {
-        try { await deleteObject(it.staging_r2_key); } catch (e) { /* best-effort */ }
-      }
+      // Rejected images are NOT deleted (user decision 2026-11-13): the
+      // staging object stays in R2 and staging_r2_key is kept, so the image
+      // stays viewable in the batch 詳情 view and the 已拒絕 section.
       await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { status: "rejected", updated_at: new Date().toISOString() } });
       results.push({ id: it.id, article_slug: it.article_slug, status: "rejected" });
     } catch (e) {

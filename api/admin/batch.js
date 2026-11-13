@@ -36,7 +36,7 @@
 //               [{ request: { contents, generationConfig }, metadata: { key } }] } } } }
 //             -> { name: "batches/xxx", ... }
 //     check:  GET  /v1beta/batches/{id}
-//             -> { done, metadata: { state: JOB_STATE_*,
+//             -> { done, metadata: { state: BATCH_STATE_*,
 //                    output: { inlinedResponses: { inlinedResponses: [...] } } },
 //                  response: { inlinedResponses: { inlinedResponses: [...] } } }
 //             inlinedResponses is DOUBLE-NESTED (verified 2026-11-13 against
@@ -215,12 +215,21 @@ const GEMINI_STATE = {
   JOB_STATE_FAILED: "failed",
   JOB_STATE_CANCELLED: "cancelled",
   JOB_STATE_EXPIRED: "expired",
+  // The Batch API actually returns BATCH_STATE_* in metadata.state
+  // (verified 2026-11-13 against a real operation) — the JOB_STATE_*
+  // keys above are kept only as a harmless fallback.
+  BATCH_STATE_PENDING: "pending",
+  BATCH_STATE_RUNNING: "running",
+  BATCH_STATE_SUCCEEDED: "succeeded",
+  BATCH_STATE_FAILED: "failed",
+  BATCH_STATE_CANCELLED: "cancelled",
+  BATCH_STATE_EXPIRED: "expired",
 };
 
 function geminiState(job) {
   const raw = (job && job.metadata && job.metadata.state) || (job && job.state) || "";
   if (GEMINI_STATE[raw]) return GEMINI_STATE[raw];
-  return raw ? String(raw).replace(/^JOB_STATE_/, "").toLowerCase() : "pending";
+  return raw ? String(raw).replace(/^(JOB_STATE_|BATCH_STATE_)/, "").toLowerCase() : "pending";
 }
 
 // ---- Model prices (DB table, with the verified fallback) ----
@@ -411,10 +420,13 @@ async function checkBatch(body) {
   const batch = brows[0];
   if (!batch) throw err(404, "batch not found");
   const items = await sbRows(`image_batch_items?select=*&batch_id=eq.${encodeURIComponent(batchId)}&order=created_at.asc`);
-  const terminal = new Set(["generated", "approved", "rejected", "failed"]);
+  // "failed" is deliberately NOT terminal here: a failed item is retried
+  // on the next Check (it re-reads the same inlined response, so a
+  // genuinely-failed item just fails again with its real reason).
+  const settled = new Set(["generated", "approved", "rejected"]);
   // Already finished and every item settled — return the stored state without
   // calling Gemini again (re-downloading would re-upload the same images).
-  if (batch.status === "succeeded" && items.length && items.every((it) => terminal.has(it.status))) {
+  if (batch.status === "succeeded" && items.length && items.every((it) => settled.has(it.status))) {
     return { ok: true, batch: publicBatch(batch, items), items: items.map((it) => publicItem(it)), note: "already complete — stored result returned" };
   }
   const job = await geminiGetBatch(batch.gemini_batch_name);
@@ -444,7 +456,9 @@ async function checkBatch(body) {
   const results = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    if (it.status !== "submitted") { results.push(publicItem(it)); continue; }
+    // Retry "submitted" AND "failed" items; skip only generated/approved/
+    // rejected (re-downloading those would re-upload the same images).
+    if (!["submitted", "failed"].includes(it.status)) { results.push(publicItem(it)); continue; }
     const { image, failReason } = extractInlineImage(responses[i]);
     if (!image) {
       await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { status: "failed", error: failReason.slice(0, 500), updated_at: now } });
@@ -767,3 +781,4 @@ module.exports = async (req, res) => {
 // module and calls these directly against a real operation fixture.
 module.exports.unwrapInlinedResponses = unwrapInlinedResponses;
 module.exports.extractInlineImage = extractInlineImage;
+module.exports.geminiState = geminiState;

@@ -135,7 +135,7 @@ approves — the user controls every step.
 
 **Fully automatic flow (2026-11-13, user decision: "全自動，連批准都自動").**
 The 2-hour pipeline's step 5F auto-submits ONE Gemini batch (model
-`gemini-3.1-flash-lite-image`, the cheapest at $0.0168/image batch) for
+`gemini-3.1-flash-lite-image`, the cheapest at $0.0168 USD/image batch) for
 every published article that has an `image_prompt`, no image yet, and no
 item already in a pending batch; a 5-minute cron then polls every pending
 auto batch, downloads finished images to R2 staging, and auto-approves
@@ -154,12 +154,12 @@ fails, it still counts toward the 3). Auto actions authenticate with `INGEST_SEC
 and only ever touch batches the auto flow created itself (`created_by`
 "auto"); manual batches stay fully manual (the user still checks and
 approves those in the admin). The user accepted that auto-approved images
-go live without a human eyeball check. Batches and per-model spend show
+go live without a human eyeball check. Batches and per-model spend (in USD) show
 on the batch page exactly like manual ones (the stats area counts every
 generated image, auto or manual).
 
 **Batch page behaviour (2026-11-13).** The model picker defaults to Lite
-(Nano Banana 2 Lite) — $0.0168 / 張（batch 價）, the cheapest. The article
+(Nano Banana 2 Lite) — $0.0168 USD / 張（batch 價）, the cheapest. The article
 list only ever shows articles that can actually be generated: imageless
 with no pending batch, or imageless whose batch was rejected (so they can
 be re-submitted); articles with an image or in a pending batch never
@@ -190,7 +190,7 @@ keeps the staging copy in R2 so the image stays viewable — rejected items
 remain listed in the batch 詳情 view and in a 已拒絕 section under the
 review list (user decision 2026-11-13, previously Reject deleted the
 staging copy). The usage-stats area shows per-model images generated so
-far + cost so far (generated × batch price) + total.
+far + cost so far in USD (generated × batch price) + total.
 
 Check reads Gemini's double-nested `inlinedResponses` (verified
 2026-11-13: both `response` and `metadata.output` carry

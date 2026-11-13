@@ -108,7 +108,7 @@
       <div id="bList"><p class="muted">載入中…</p></div>
 
       <h2>揀模型</h2>
-      <p class="muted">模型清單預先顯示（每個模型嘅 batch 價錢），預設揀 Lite（最平，$0.0168 / 張），可以改。生成會收費（batch 價，見上面用量統計）。</p>
+      <p class="muted">模型清單預先顯示（每個模型嘅 batch 價錢），預設揀 Lite（最平，$0.0168 USD / 張），可以改。生成會收費（batch 價，見上面用量統計）。</p>
       <div class="model-pick" id="bModels"><span class="muted">載入模型價錢中…</span></div>
       <div class="admin-bar">
         <button class="abtn primary" id="bGenBtn" type="button">Generate（生成）</button>
@@ -228,7 +228,7 @@
 
   function fmtUsd(n){
     if (n == null || isNaN(n)) return "待確認";
-    return "$" + Number(n).toFixed(4);
+    return "$" + Number(n).toFixed(4) + " USD";
   }
 
   function batchArticleBySlug(slug){
@@ -269,7 +269,7 @@
     el.innerHTML = models.map(function(m){
       var checked = m.model === batchState.model ? " checked" : "";
       // Lite's label is fixed so it always reads exactly
-      // "Lite (Nano Banana 2 Lite) — $0.0168 / 張（batch 價）".
+      // "Lite (Nano Banana 2 Lite) — $0.0168 USD / 張（batch 價）".
       var label = m.model === "gemini-3.1-flash-lite-image" ? "Lite (Nano Banana 2 Lite)" : (m.display_name || m.model);
       return "<label><input type=\"radio\" name=\"bModel\" value=\"" + esc(m.model) + "\"" + checked + "> "
         + esc(label) + " — " + fmtUsd(m.batch_price_usd) + " / 張（batch 價）</label>";

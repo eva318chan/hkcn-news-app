@@ -1007,7 +1007,7 @@ function summarize(action, body, out) {
       // The slugs are already in out.note; only the count is appended here
       // so the detail does not list them twice.
       const capped = out.retry_capped_count ? `, retry-capped=${out.retry_capped_count}` : "";
-      if (out.batch) return { batchId: out.gemini_batch_name || out.batch.id, detail: `model=${out.model || AUTO_MODEL}, articles=${out.submitted || 0}, cost=$${Number(out.cost_usd || 0).toFixed(2)}${capped}`.slice(0, 500) };
+      if (out.batch) return { batchId: out.gemini_batch_name || out.batch.id, detail: `model=${out.model || AUTO_MODEL}, articles=${out.submitted || 0}, cost=$${Number(out.cost_usd || 0).toFixed(2)} USD${capped}`.slice(0, 500) };
       return { batchId: null, detail: `${out.note || "nothing to submit"}${capped}`.slice(0, 500) };
     }
     if (action === "auto-poll" && out) {

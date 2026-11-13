@@ -162,7 +162,11 @@ finished batch's images are actually downloaded instead of every item
 failing). Each batch row has a 詳情 button showing every article's
 title, status and per-item error; after a Check with failures that batch
 opens automatically. The check log entry lists which slugs generated /
-failed and why.
+failed and why. A per-item error is shown in red only when the item
+failed — when an item is marked generated or approved its error is
+cleared (and any stale error is swept on the next Check or detail view),
+so a successful item never shows an old failure in red (user report
+2026-11-13).
 
 Batch size is a recommendation, not a hard limit (user decision
 2026-11-13: "endpoint 放寬，warning 照去"): the page suggests ~10 per

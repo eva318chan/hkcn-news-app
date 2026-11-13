@@ -413,7 +413,10 @@
           items.forEach(function(it){
             html += "<tr><td>" + esc(it.title || it.article_slug) + "<br><span class=\"muted\">" + esc(it.article_slug) + "</span></td>"
               + "<td>" + esc(it.status) + "</td>"
-              + "<td>" + (it.error ? "<span style=\"color:#b71c1c\">" + esc(it.error) + "</span>" : (it.staging_url ? "<a href=\"" + esc(it.staging_url) + "\" target=\"_blank\" rel=\"noopener\">睇圖</a>" : "")) + "</td></tr>";
+              // Error text is red ONLY for failed items — a generated /
+              // approved item must never show an old error in red (user
+              // report 2026-11-13: stale "batch batch_state_succeeded").
+              + "<td>" + (it.status === "failed" && it.error ? "<span style=\"color:#b71c1c\">" + esc(it.error) + "</span>" : (it.staging_url ? "<a href=\"" + esc(it.staging_url) + "\" target=\"_blank\" rel=\"noopener\">睇圖</a>" : "")) + "</td></tr>";
           });
           html += "</tbody></table>";
         }

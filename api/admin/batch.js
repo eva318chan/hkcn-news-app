@@ -420,6 +420,18 @@ async function checkBatch(body) {
   const batch = brows[0];
   if (!batch) throw err(404, "batch not found");
   const items = await sbRows(`image_batch_items?select=*&batch_id=eq.${encodeURIComponent(batchId)}&order=created_at.asc`);
+  const now = new Date().toISOString();
+  // Sweep stale errors first: an item that already generated/approved must
+  // not keep an error from an earlier failed Check (user report 2026-11-13:
+  // generated items still showed "batch batch_state_succeeded" in red).
+  // Runs before the already-complete early return, so a Check on a
+  // finished batch still heals its rows.
+  for (const it of items) {
+    if ((it.status === "generated" || it.status === "approved") && it.error) {
+      await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { error: null, updated_at: now } });
+      it.error = null;
+    }
+  }
   // "failed" is deliberately NOT terminal here: a failed item is retried
   // on the next Check (it re-reads the same inlined response, so a
   // genuinely-failed item just fails again with its real reason).
@@ -432,7 +444,6 @@ async function checkBatch(body) {
   const job = await geminiGetBatch(batch.gemini_batch_name);
   const state = geminiState(job);
   const done = job.done === true || ["succeeded", "failed", "cancelled", "expired"].includes(state);
-  const now = new Date().toISOString();
   if (!done) {
     // image_batches has no updated_at column (see sql/001-batch-tables.sql) — PATCH status only.
     await sbFetch(`image_batches?id=eq.${encodeURIComponent(batchId)}`, { method: "PATCH", body: { status: state } });
@@ -478,8 +489,10 @@ async function checkBatch(body) {
     const contentType = typeof image.mimeType === "string" && image.mimeType.startsWith("image/")
       ? image.mimeType : "image/jpeg";
     const out = await putObject({ key, body: buf, contentType });
-    await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { status: "generated", staging_r2_key: out.key, updated_at: now } });
-    results.push(publicItem({ ...it, status: "generated", staging_r2_key: out.key }));
+    // Clear any error from an earlier failed Check — a generated item must
+    // not keep showing the old failure in red.
+    await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { status: "generated", staging_r2_key: out.key, error: null, updated_at: now } });
+    results.push(publicItem({ ...it, status: "generated", staging_r2_key: out.key, error: null }));
   }
   await sbFetch(`image_batches?id=eq.${encodeURIComponent(batchId)}`, { method: "PATCH", body: { status: "succeeded" } });
   const generated = results.filter((r) => r.status === "generated").length;
@@ -515,7 +528,7 @@ async function approveItems(body) {
       await sbFetch(`articles?site=eq.${SITE}&slug=eq.${encodeURIComponent(it.article_slug)}`, {
         method: "PATCH", body: { image_url: copied.url, image_r2_key: copied.key, updated_at: now },
       });
-      await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { status: "approved", updated_at: now } });
+      await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { status: "approved", error: null, updated_at: now } });
       try { await deleteObject(it.staging_r2_key); } catch (e) { /* staging cleanup is best-effort */ }
       results.push({ id: it.id, article_slug: it.article_slug, status: "approved", image_url: copied.url, image_r2_key: copied.key });
     } catch (e) {
@@ -580,6 +593,17 @@ async function listItems(body) {
   params.set("order", "created_at.desc");
   params.set("limit", String(limit));
   const items = await sbRows(`image_batch_items?${params.toString()}`);
+  // Heal stale errors on read too (same rule as the Check sweep): a
+  // generated/approved item must not keep an error from an earlier failed
+  // Check, so the batch 詳情 view never shows it in red. This also clears
+  // the two rows left over from the 2026-11-13 batch the next time the
+  // detail view is opened — no separate one-off SQL needed.
+  for (const it of items) {
+    if ((it.status === "generated" || it.status === "approved") && it.error) {
+      await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { error: null, updated_at: new Date().toISOString() } });
+      it.error = null;
+    }
+  }
   const slugs = [...new Set(items.map((it) => it.article_slug))];
   const titles = {};
   if (slugs.length) {

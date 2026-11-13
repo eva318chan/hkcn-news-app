@@ -148,6 +148,15 @@ it to the article (`image_url` + `image_r2_key`); Reject deletes the
 staging copy. The usage-stats area shows per-model images generated so
 far + cost so far (generated × batch price) + total.
 
+Check reads Gemini's double-nested `inlinedResponses` (verified
+2026-11-13: both `response` and `metadata.output` carry
+`{"inlinedResponses": [...]}` — the endpoint unwraps either shape, so a
+finished batch's images are actually downloaded instead of every item
+failing). Each batch row has a 詳情 button showing every article's
+title, status and per-item error; after a Check with failures that batch
+opens automatically. The check log entry lists which slugs generated /
+failed and why.
+
 Batch size is a recommendation, not a hard limit (user decision
 2026-11-13: "endpoint 放寬，warning 照去"): the page suggests ~10 per
 batch and warns above that, but the endpoint accepts whatever the user

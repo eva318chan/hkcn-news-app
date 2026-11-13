@@ -46,6 +46,9 @@
   .review-card .rbody{padding:10px}
   .review-card .rtitle{font-size:13px;font-weight:600;margin-bottom:8px}
   .review-card .rbtns{display:flex;gap:8px}
+  /* Expandable batch items: per-article status + per-item error, shown
+     under a batch row when the user clicks 詳情. */
+  .bItems{margin:2px 0 12px;padding:10px 12px;border:1px solid #e5e5e5;border-radius:8px}
 </style>
 <script>try{var _t=localStorage.getItem("hks_theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=_t;}catch(e){}</script>
 <!-- Vercel Web Analytics: window.va stub + script. This is exactly what
@@ -116,6 +119,7 @@
       </div>
 
       <h2>Batch 列表</h2>
+      <p class="muted">撳「詳情」睇每篇嘅狀態同失敗原因；撳 Check 查 batch 狀態。</p>
       <div id="bBatches"><p class="muted">未有 batch。</p></div>
 
       <h2>待審核（已生成，等你批）</h2>
@@ -207,7 +211,7 @@
   // Single-click Generate: the model picker is shown by default (Flash
   // Image pre-selected), so one click on Generate submits. Nothing
   // auto-generates — the user controls every step.
-  var batchState = { articles: [], stats: null, model: "" };
+  var batchState = { articles: [], batches: [], stats: null, model: "" };
   var BATCH_MAX = 10; // suggestion only — the endpoint no longer hard-rejects above this
   var DEFAULT_MODEL = "gemini-3.1-flash-image";
 
@@ -370,50 +374,108 @@
     });
   }
 
+  // Expandable batch rows: each batch has a 詳情 button that shows its
+  // items (title, status, per-item Gemini error when failed) via the
+  // existing list-items action, so the user can see WHICH articles failed
+  // and why instead of guessing from totals. Expanded state survives list
+  // refreshes. After a Check with failures, that batch opens automatically.
+  var batchItemsCache = {}; // batchId -> items array, or null while loading
+
   function loadBatches(){
-    batchApi("list-batches", { limit: 20 }).then(function(r){
-      var el = $("bBatches");
-      if (!r.batches || !r.batches.length){ el.innerHTML = "<p class=\"muted\">未有 batch。</p>"; return; }
-      var html = "";
-      r.batches.forEach(function(b){
-        var c = b.counts || {};
-        html += "<div class=\"batch-row\"><div class=\"bmeta\">"
-          + "<div class=\"btitle\">" + esc(b.gemini_batch_name || b.id) + "</div>"
-          + "<div class=\"bcat\">" + esc(b.model) + " · 狀態：" + esc(b.status) + " · " + esc(b.created_at || "") + " · " + b.article_count + " 篇（已生成 " + (c.generated || 0) + " / 已批准 " + (c.approved || 0) + " / 失敗 " + (c.failed || 0) + "）</div>"
-          + "</div><button class=\"abtn bCheck\" type=\"button\" data-id=\"" + esc(b.id) + "\">Check</button></div>";
-      });
-      el.innerHTML = html;
-      var btns = el.querySelectorAll(".bCheck");
-      for (var i = 0; i < btns.length; i++){
-        btns[i].addEventListener("click", function(){
-          var btn = this;
-          btn.disabled = true;
-          // Show the result inline in this batch row (the status box is
-          // updated too, but the page never scrolls).
-          var rowEl = btn.closest ? btn.closest(".batch-row") : null;
-          var catEl = rowEl ? rowEl.querySelector(".bcat") : null;
-          function setRowStatus(txt){
-            if (catEl) catEl.textContent = catEl.textContent.replace(/狀態：[^·]*/, "狀態：" + txt);
-          }
-          batchMsg("查緊 batch 狀態…", false);
-          batchApi("check", { batchId: btn.getAttribute("data-id") }).then(function(r){
-            btn.disabled = false;
-            setRowStatus(r.batch.status);
-            batchMsg(r.note || ("Batch 狀態：" + r.batch.status), false);
-            loadBatches();
-            loadReview();
-            loadBatchStats();
-            loadLogs();
-          }).catch(function(e){
-            btn.disabled = false;
-            setRowStatus("Check 失敗");
-            batchMsg("Check 失敗：" + e.message, true);
-          });
-        });
-      }
+    return batchApi("list-batches", { limit: 20 }).then(function(r){
+      batchState.batches = r.batches || [];
+      renderBatches();
     }).catch(function(e){
       $("bBatches").innerHTML = "<p class=\"muted\">載入失敗：" + esc(e.message) + "</p>";
       batchMsg("載入 Batch 列表失敗：" + e.message, true);
+    });
+  }
+
+  function renderBatches(){
+    var el = $("bBatches");
+    var batches = batchState.batches || [];
+    if (!batches.length){ el.innerHTML = "<p class=\"muted\">未有 batch。</p>"; return; }
+    var html = "";
+    batches.forEach(function(b){
+      var c = b.counts || {};
+      html += "<div class=\"batch-row\"><div class=\"bmeta\">"
+        + "<div class=\"btitle\">" + esc(b.gemini_batch_name || b.id) + "</div>"
+        + "<div class=\"bcat\">" + esc(b.model) + " · 狀態：" + esc(b.status) + " · " + esc(b.created_at || "") + " · " + b.article_count + " 篇（已生成 " + (c.generated || 0) + " / 已批准 " + (c.approved || 0) + " / 失敗 " + (c.failed || 0) + "）</div>"
+        + "</div><button class=\"abtn bItemsBtn\" type=\"button\" data-id=\"" + esc(b.id) + "\">詳情</button>"
+        + "<button class=\"abtn bCheck\" type=\"button\" data-id=\"" + esc(b.id) + "\">Check</button></div>";
+      if (Object.prototype.hasOwnProperty.call(batchItemsCache, b.id)){
+        var items = batchItemsCache[b.id];
+        html += "<div class=\"bItems\">";
+        if (items === null) html += "<p class=\"muted\">載入緊…</p>";
+        else if (!items.length) html += "<p class=\"muted\">呢個 batch 未有項目。</p>";
+        else {
+          html += "<table class=\"alist\"><thead><tr><th>文章</th><th style=\"width:80px\">狀態</th><th>詳情／錯誤</th></tr></thead><tbody>";
+          items.forEach(function(it){
+            html += "<tr><td>" + esc(it.title || it.article_slug) + "<br><span class=\"muted\">" + esc(it.article_slug) + "</span></td>"
+              + "<td>" + esc(it.status) + "</td>"
+              + "<td>" + (it.error ? "<span style=\"color:#b71c1c\">" + esc(it.error) + "</span>" : (it.staging_url ? "<a href=\"" + esc(it.staging_url) + "\" target=\"_blank\" rel=\"noopener\">睇圖</a>" : "")) + "</td></tr>";
+          });
+          html += "</tbody></table>";
+        }
+        html += "</div>";
+      }
+    });
+    el.innerHTML = html;
+    var itemBtns = el.querySelectorAll(".bItemsBtn");
+    for (var i = 0; i < itemBtns.length; i++){
+      itemBtns[i].addEventListener("click", function(){ toggleBatchItems(this.getAttribute("data-id")); });
+    }
+    var btns = el.querySelectorAll(".bCheck");
+    for (var j = 0; j < btns.length; j++){
+      btns[j].addEventListener("click", function(){
+        var btn = this;
+        var batchId = btn.getAttribute("data-id");
+        btn.disabled = true;
+        // Show the result inline in this batch row (the status box is
+        // updated too, but the page never scrolls).
+        var rowEl = btn.closest ? btn.closest(".batch-row") : null;
+        var catEl = rowEl ? rowEl.querySelector(".bcat") : null;
+        function setRowStatus(txt){
+          if (catEl) catEl.textContent = catEl.textContent.replace(/狀態：[^·]*/, "狀態：" + txt);
+        }
+        batchMsg("查緊 batch 狀態…", false);
+        batchApi("check", { batchId: batchId }).then(function(r){
+          btn.disabled = false;
+          setRowStatus(r.batch.status);
+          batchMsg(r.note || ("Batch 狀態：" + r.batch.status), false);
+          loadBatches().then(function(){
+            // If anything failed, open this batch's items view so the
+            // per-item errors are visible right away.
+            var failed = r.items ? r.items.filter(function(x){ return x.status === "failed"; }).length : 0;
+            if (failed > 0 && !Object.prototype.hasOwnProperty.call(batchItemsCache, batchId)) toggleBatchItems(batchId);
+          });
+          loadReview();
+          loadBatchStats();
+          loadLogs();
+        }).catch(function(e){
+          btn.disabled = false;
+          setRowStatus("Check 失敗");
+          batchMsg("Check 失敗：" + e.message, true);
+        });
+      });
+    }
+  }
+
+  function toggleBatchItems(batchId){
+    if (Object.prototype.hasOwnProperty.call(batchItemsCache, batchId)){
+      delete batchItemsCache[batchId];
+      renderBatches();
+      return;
+    }
+    batchItemsCache[batchId] = null;
+    renderBatches();
+    batchApi("list-items", { batchId: batchId, limit: 100 }).then(function(r){
+      batchItemsCache[batchId] = r.items || [];
+      renderBatches();
+    }).catch(function(e){
+      delete batchItemsCache[batchId];
+      renderBatches();
+      batchMsg("載入 batch 項目失敗：" + e.message, true);
     });
   }
 

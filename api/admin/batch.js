@@ -36,11 +36,17 @@
 //               [{ request: { contents, generationConfig }, metadata: { key } }] } } } }
 //             -> { name: "batches/xxx", ... }
 //     check:  GET  /v1beta/batches/{id}
-//             -> { done, metadata: { state: JOB_STATE_* },
-//                  response: { inlinedResponses: [{ response | error }] } }
-//             Responses are in request order (metadata.key is the slug, kept
-//             for traceability). A finished batch does NOT guarantee a usable
-//             image for every request — per-item failures are recorded.
+//             -> { done, metadata: { state: JOB_STATE_*,
+//                    output: { inlinedResponses: { inlinedResponses: [...] } } },
+//                  response: { inlinedResponses: { inlinedResponses: [...] } } }
+//             inlinedResponses is DOUBLE-NESTED (verified 2026-11-13 against
+//             a real operation): response.inlinedResponses is an OBJECT
+//             {"inlinedResponses": [...]}, not a flat array, and
+//             metadata.output.inlinedResponses has the identical shape —
+//             see unwrapInlinedResponses(). Responses are in request order
+//             (metadata.key is the slug, kept for traceability). A finished
+//             batch does NOT guarantee a usable image for every request —
+//             per-item failures are recorded.
 //   Batch price is half of standard (Lite ~$0.017, Flash 1K ~$0.034,
 //   Pro 1K/2K ~$0.067 per image). Target turnaround is up to 24h.
 "use strict";
@@ -352,6 +358,52 @@ async function createBatch(body, email) {
   }
 }
 
+// Unwrap Gemini batch inlined responses. The Batch API returns them
+// double-nested (verified 2026-11-13 against the real operation
+// batches/sxp329nhpsu7to6vk65dtaeyir9qxz9l88nx): response.inlinedResponses
+// is an OBJECT {"inlinedResponses": [...]}, not a flat array, and
+// metadata.output.inlinedResponses has the identical shape. Accept both
+// locations and both shapes (flat array, or object with an inlinedResponses
+// key). When the two locations disagree in length, use the fuller one —
+// the real operation carries the same items in both, but a partial
+// response may truncate one of them.
+// Returns the flat array of per-request results, in request order.
+function unwrapInlinedResponses(job) {
+  const candidates = [];
+  const push = (v) => {
+    if (Array.isArray(v)) candidates.push(v);
+    else if (v && Array.isArray(v.inlinedResponses)) candidates.push(v.inlinedResponses);
+  };
+  if (job) {
+    push(job.response && job.response.inlinedResponses);
+    push(job.metadata && job.metadata.output && job.metadata.output.inlinedResponses);
+    push(job.dest && job.dest.inlinedResponses);
+  }
+  let best = [];
+  for (const c of candidates) if (c.length > best.length) best = c;
+  return best;
+}
+
+// Extract the image (if any) from one inlined batch response.
+// Returns { image } on success, or { failReason } when this request did
+// not produce a usable image. A per-item Gemini `error` is reported with
+// its own message; a text-only reply is reported as such (it is a model
+// failure, not a missing result).
+function extractInlineImage(inline) {
+  const errObj = inline && inline.error;
+  if (errObj) return { failReason: String(errObj.message || JSON.stringify(errObj)).slice(0, 300) };
+  const resp = inline && inline.response;
+  if (!resp) return { failReason: "no result in batch response" };
+  const parts = ((resp.candidates || [])[0] && resp.candidates[0].content && resp.candidates[0].content.parts) || [];
+  for (const p of parts) {
+    if (p.inlineData && p.inlineData.data) return { image: p.inlineData };
+  }
+  const textPart = parts.find((p) => typeof p.text === "string" && p.text.trim());
+  return { failReason: textPart
+    ? `model returned text instead of an image: ${textPart.text.slice(0, 200)}`
+    : "model returned no image" };
+}
+
 async function checkBatch(body) {
   const batchId = String(body.batchId || "").trim();
   if (!batchId) throw err(400, "missing batchId");
@@ -388,33 +440,12 @@ async function checkBatch(body) {
   // Succeeded — download the results. Responses are in request order
   // (inlinedResponses[i] is the result of the i-th submitted article).
   if (!r2Configured()) throw err(503, "R2 credentials not configured — cannot download batch results");
-  const responses = (job.response && job.response.inlinedResponses)
-    || (job.dest && job.dest.inlinedResponses) || [];
+  const responses = unwrapInlinedResponses(job);
   const results = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (it.status !== "submitted") { results.push(publicItem(it)); continue; }
-    const inline = responses[i];
-    const resp = inline && inline.response;
-    const errObj = inline && inline.error;
-    let image = null;
-    let failReason = null;
-    if (errObj) {
-      failReason = String(errObj.message || JSON.stringify(errObj)).slice(0, 300);
-    } else if (!resp) {
-      failReason = "no result in batch response";
-    } else {
-      const parts = ((resp.candidates || [])[0] && resp.candidates[0].content && resp.candidates[0].content.parts) || [];
-      for (const p of parts) {
-        if (p.inlineData && p.inlineData.data) { image = p.inlineData; break; }
-      }
-      if (!image) {
-        const textPart = parts.find((p) => typeof p.text === "string" && p.text.trim());
-        failReason = textPart
-          ? `model returned text instead of an image: ${textPart.text.slice(0, 200)}`
-          : "model returned no image";
-      }
-    }
+    const { image, failReason } = extractInlineImage(responses[i]);
     if (!image) {
       await sbFetch(`image_batch_items?id=eq.${it.id}`, { method: "PATCH", body: { status: "failed", error: failReason.slice(0, 500), updated_at: now } });
       results.push(publicItem({ ...it, status: "failed", error: failReason.slice(0, 500) }));
@@ -651,7 +682,14 @@ function summarize(action, body, out) {
     }
     if (action === "check" && out && out.batch) {
       const c = out.batch.counts || {};
-      return { batchId: String(body.batchId || ""), detail: `state=${out.batch.status}, generated=${c.generated || 0}, failed=${c.failed || 0}` };
+      const items = Array.isArray(out.items) ? out.items : [];
+      const gen = items.filter((i) => i.status === "generated").map((i) => i.article_slug);
+      const fail = items.filter((i) => i.status === "failed")
+        .map((i) => `${i.article_slug} (${String(i.error || "failed").slice(0, 100)})`);
+      let detail = `state=${out.batch.status}, generated=${c.generated || 0}, failed=${c.failed || 0}`;
+      if (gen.length) detail += `; generated: ${gen.join(", ")}`;
+      if (fail.length) detail += `; failed: ${fail.join("; ")}`;
+      return { batchId: String(body.batchId || ""), detail: detail.slice(0, 500) };
     }
     if ((action === "approve" || action === "reject") && out && Array.isArray(out.results)) {
       const done = out.results.filter((r) => r.status === "approved" || r.status === "rejected").length;
@@ -724,3 +762,8 @@ module.exports = async (req, res) => {
     res.status(status).json({ ok: false, error: msg });
   }
 };
+
+// Test hooks: the parser test (throwaway, not committed) requires this
+// module and calls these directly against a real operation fixture.
+module.exports.unwrapInlinedResponses = unwrapInlinedResponses;
+module.exports.extractInlineImage = extractInlineImage;

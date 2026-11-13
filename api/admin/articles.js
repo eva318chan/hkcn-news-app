@@ -3,14 +3,14 @@
 //   GET    ?id=<slug>                       one article (any status)
 //   POST   {slug?, title_*, summary_*, tags_*, category, published_at,
 //           source_name, source_url, image_url, image_r2_key,
-//           image_caption, footer_note, image_prompt?, status}
+//           image_caption, footer_note, image_prompt?, extra_images?, status}
 //                                          create — slug auto-derived from
 //                                          the English title when omitted;
 //                                          409 when the slug already exists
 //   PATCH  ?id=<slug>  {title_*, summary_*, tags_*, category, image_url,
 //                       image_r2_key, image_caption, footer_note,
-//                       image_prompt, published_at, source_name, source_url,
-//                       status}
+//                       image_prompt, extra_images, published_at, source_name,
+//                       source_url, status}
 //   DELETE ?id=<slug>                       delete (the UI confirms first)
 // Editable text is title_*/summary_* in en/zh_hant/zh_hans — articles have
 // no full body column; the article page renders the summary as its content.
@@ -83,6 +83,17 @@ function cleanPatch(body) {
   if (body.image_prompt !== undefined) {
     if (body.image_prompt !== null && typeof body.image_prompt !== "string") return { error: "image_prompt must be a string or null" };
     patch.image_prompt = body.image_prompt ? body.image_prompt.slice(0, 5000) : null;
+  }
+  if (body.extra_images !== undefined) {
+    if (body.extra_images !== null && (!Array.isArray(body.extra_images) || body.extra_images.length > 10 ||
+        body.extra_images.some((e) => !e || typeof e !== "object" || typeof e.url !== "string" ||
+          !/^https?:\/\//.test(e.url) || (e.caption !== undefined && typeof e.caption !== "string")))) {
+      return { error: "extra_images must be null or an array of {url, caption?} (max 10)" };
+    }
+    patch.extra_images = body.extra_images ? body.extra_images.map((e) => ({
+      url: e.url.trim().slice(0, 2000),
+      ...(typeof e.caption === "string" && e.caption ? { caption: e.caption.slice(0, 1000) } : {}),
+    })) : null;
   }
   if (body.published_at !== undefined) {
     if (typeof body.published_at !== "string" || Number.isNaN(Date.parse(body.published_at))) return { error: "published_at must be a valid date/time" };
@@ -174,6 +185,11 @@ function cleanCreate(body) {
     footer_note: optStr(body.footer_note, 1000),
     ...(typeof body.image_prompt === "string" && body.image_prompt.trim()
       ? { image_prompt: body.image_prompt.trim().slice(0, 5000) } : {}),
+    ...(Array.isArray(body.extra_images) && body.extra_images.length
+      ? { extra_images: body.extra_images.filter((e) => e && typeof e.url === "string").map((e) => ({
+          url: e.url.trim().slice(0, 2000),
+          ...(typeof e.caption === "string" && e.caption ? { caption: e.caption.slice(0, 1000) } : {}),
+        })) } : {}),
     title_en: title.en,
     title_zh_hant: title.zh_hant,
     title_zh_hans: title.zh_hans,

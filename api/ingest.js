@@ -3,8 +3,12 @@
 //   Body (one article, same shape as the old data/*.json entries):
 //     { id, category, published_at, source:{name,url}, image_url,
 //       image_r2_key?, image_caption?, footer_note?, image_prompt?,
+//       extra_images?,
 //       title:{en,zh_hant,zh_hans}, summary:{en,zh_hant,zh_hans},
 //       tags:{en,zh_hant,zh_hans} }
+//   extra_images is an optional array of {url, caption} for additional real
+//   photos, rendered below the summary (migration 003). The hero image stays
+//   in image_url / image_caption.
 //   image_prompt is the exact Gemini prompt used to generate the article's
 //   AI design image (migration 002). It is stored in articles.image_prompt;
 //   null/absent for real photos, hotlinks and pre-migration articles. The
@@ -52,6 +56,9 @@ function toDbRow(a) {
     // 002, and sending the key before 002 is applied would fail the upsert.
     // Absent prompt => the column keeps its default (null).
     ...(a.image_prompt ? { image_prompt: a.image_prompt } : {}),
+    // Same rule as image_prompt: extra_images needs migration 003 applied
+    // before it can be sent, or the upsert fails on the unknown column.
+    ...(a.extra_images ? { extra_images: a.extra_images } : {}),
     title_en: a.title?.en || "",
     title_zh_hant: a.title?.zh_hant || "",
     title_zh_hans: a.title?.zh_hans || "",
@@ -73,6 +80,18 @@ function validate(a) {
   if (!a.published_at || Number.isNaN(Date.parse(a.published_at))) return "missing/invalid published_at";
   if (!a.title?.zh_hant && !a.title?.en) return "missing title";
   if (!a.summary?.zh_hant && !a.summary?.en) return "missing summary";
+  if (a.extra_images !== undefined) {
+    if (!Array.isArray(a.extra_images) || a.extra_images.length > 10) {
+      return "extra_images must be an array of at most 10 items";
+    }
+    for (const e of a.extra_images) {
+      if (!e || typeof e !== "object" || typeof e.url !== "string" ||
+          !/^https?:\/\//.test(e.url) ||
+          (e.caption !== undefined && typeof e.caption !== "string")) {
+        return "each extra_images item needs a url (http(s)) and an optional caption string";
+      }
+    }
+  }
   return null;
 }
 

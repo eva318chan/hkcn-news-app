@@ -49,6 +49,20 @@
   /* Expandable batch items: per-article status + per-item error, shown
      under a batch row when the user clicks 詳情. */
   .bItems{margin:2px 0 12px;padding:10px 12px;border:1px solid #e5e5e5;border-radius:8px}
+  /* Gemini credit tracker (user request 2026-11-13): estimated remaining
+     credit + how many Lite images it can still buy. Amber below 200
+     images remaining, red below 50. */
+  .credit-box{border:1px solid #e5e5e5;border-radius:10px;padding:14px 16px;margin:12px 0}
+  .credit-big{font-size:28px;font-weight:700}
+  .credit-sub{font-size:14px;color:#555;margin-top:2px}
+  .credit-grid{display:flex;gap:24px;flex-wrap:wrap;margin-top:10px}
+  .credit-grid .clabel{font-size:12px;color:#888}
+  .credit-grid .cval{font-size:16px;font-weight:600}
+  .credit-warn-amber{border-color:#f9a825;background:#fff8e1}
+  .credit-warn-red{border-color:#c62828;background:#fdecea}
+  .credit-warn-red .credit-big{color:#b71c1c}
+  .credit-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  .credit-form input[type=number],.credit-form input[type=date],.credit-form input[type=text]{padding:9px;font-size:15px;border:1px solid #ccc;border-radius:8px;background:var(--card,#fff);color:inherit}
 </style>
 <script>try{var _t=localStorage.getItem("hks_theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.dataset.theme=_t;}catch(e){}</script>
 <!-- Vercel Web Analytics: window.va stub + script. This is exactly what
@@ -96,6 +110,14 @@
          old page showed no error when Generate failed). -->
     <div id="bStatus" class="hidden"></div>
     <div id="batchStats" class="muted">載入用量統計中…</div>
+
+    <!-- Gemini credit tracker (user request 2026-11-13): estimated
+         remaining credit in USD + how many Lite images it can still buy,
+         so the user knows when to top up. Numbers are an estimate — see
+         the note inside the box. Filled in by loadCredit() after sign-in. -->
+    <div id="creditBox" class="credit-box">
+      <div class="muted">Gemini 增值結餘（估算）載入中…</div>
+    </div>
 
     <section class="batch-sec">
       <h2>揀新聞</h2>
@@ -291,6 +313,141 @@
     });
   }
 
+  // ---- Gemini credit tracker (user request 2026-11-13) ----
+  // Estimated remaining credit in USD + how many Lite images it can
+  // still buy, so the user knows when to top up. The server
+  // (credit-summary) supplies the top-up ledger, the anchor constants
+  // and the current batch spend; today's USD->HKD rate is fetched here
+  // from Frankfurter (free, no key) and the arithmetic is done here.
+  // Formula (same as the server's creditEstimate — keep them in sync):
+  //   extraSpendUSD = max(0, batchTotalSpendUSD − anchor.batchSpendUSD)
+  //   totalUsedHKD = anchor.usageHKD + extraSpendUSD × rate
+  //   remainingHKD = topupsTotalHKD − totalUsedHKD
+  //   remainingUSD = remainingHKD / rate
+  //   imagesRemaining = floor(remainingUSD / liteBatchPriceUSD)
+  // The US$1.60 batch spend at the anchor is already inside the HK$16.79
+  // anchor usage, so it is NOT subtracted again. Estimate only: direct
+  // generations outside the batch flow are not counted, so the true
+  // Google balance may be slightly lower.
+  var creditState = { summary: null, rate: null, rateDate: null, rateFallback: false };
+  var CREDIT_FALLBACK_RATE = 7.85;
+
+  function fmtHkd(n){
+    if (n == null || isNaN(n)) return "待確認";
+    return "HK$" + Number(n).toFixed(2);
+  }
+
+  function fmtUsd2(n){
+    if (n == null || isNaN(n)) return "待確認";
+    return "$" + Number(n).toFixed(2) + " USD";
+  }
+
+  function creditNumbers(){
+    var s = creditState.summary;
+    if (!s) return null;
+    var rate = creditState.rate || CREDIT_FALLBACK_RATE;
+    var extraSpendUSD = Math.max(0, Number(s.batchTotalSpendUSD || 0) - Number(s.anchor.batchSpendUSD || 0));
+    var totalUsedHKD = Number(s.anchor.usageHKD || 0) + extraSpendUSD * rate;
+    var remainingHKD = Number(s.topupsTotalHKD || 0) - totalUsedHKD;
+    var remainingUSD = remainingHKD / rate;
+    var price = Number(s.liteBatchPriceUSD || 0.0168);
+    return {
+      rate: rate, totalUsedHKD: totalUsedHKD, remainingHKD: remainingHKD,
+      remainingUSD: remainingUSD,
+      imagesRemaining: Math.max(0, Math.floor(remainingUSD / price)),
+      extraSpendUSD: extraSpendUSD
+    };
+  }
+
+  function renderCredit(){
+    var el = $("creditBox");
+    var s = creditState.summary;
+    if (!s){ el.innerHTML = "<div class=\"muted\">增值結餘載入失敗。</div>"; return; }
+    var n = creditNumbers();
+    var warn = "";
+    if (n.imagesRemaining < 50) warn = " credit-warn-red";
+    else if (n.imagesRemaining < 200) warn = " credit-warn-amber";
+    var rateLine = creditState.rateFallback
+      ? "今日匯率 1 USD = " + CREDIT_FALLBACK_RATE.toFixed(2) + " HKD（後備估算——即時匯率載入失敗）"
+      : "今日匯率 1 USD = " + n.rate.toFixed(4) + " HKD（Frankfurter，" + esc(creditState.rateDate || "") + "）";
+    var html = "<div class=\"credit-big\">剩返 " + fmtUsd2(n.remainingUSD) + "</div>"
+      + "<div class=\"credit-sub\">約 " + fmtHkd(n.remainingHKD) + " · 大約仲可以生 <strong>" + n.imagesRemaining + "</strong> 張圖（Lite batch 價 $0.0168 USD／張）</div>"
+      + (n.imagesRemaining < 200 ? "<div class=\"credit-sub\">⚠️ 剩返少過 200 張圖——係時候增值喇。</div>" : "")
+      + "<div class=\"credit-grid\">"
+      + "<div><div class=\"clabel\">已預付（總數）</div><div class=\"cval\">" + fmtHkd(s.topupsTotalHKD) + "</div></div>"
+      + "<div><div class=\"clabel\">已用（估算）</div><div class=\"cval\">" + fmtHkd(n.totalUsedHKD) + "</div></div>"
+      + "<div><div class=\"clabel\">Batch 使費（至今）</div><div class=\"cval\">" + fmtUsd(s.batchTotalSpendUSD) + "</div></div>"
+      + "</div>"
+      + "<p class=\"muted\">" + rateLine + "。估算：以 2026-11-13 Google 結單 HK$16.79 已用為準，加上之後嘅 batch 使費；batch 以外直接生圖唔計在內，實際結餘可能略低。"
+      + (s.ledgerLive ? "" : " 增值記錄表未建立——顯示緊預設 HK$160.00 預付，請跑 sql/003-credit-topups.sql 啟用增值記錄。")
+      + "</p>";
+    var topups = s.topups || [];
+    if (topups.length){
+      html += "<div class=\"muted\">增值記錄：</div><table class=\"alist\"><thead><tr><th>日期</th><th>金額</th><th>備註</th></tr></thead><tbody>";
+      topups.forEach(function(t){
+        html += "<tr><td>" + esc(t.topped_up_at || "") + "</td><td>" + fmtHkd(t.amount_hkd) + "</td><td>" + esc(t.note || "") + "</td></tr>";
+      });
+      html += "</tbody></table>";
+    }
+    html += "<form id=\"creditTopupForm\" class=\"credit-form\">"
+      + "<label>增值金額 (HKD) <input type=\"number\" id=\"creditAmount\" min=\"0.01\" step=\"0.01\" placeholder=\"例如 160\" required></label>"
+      + "<label>日期 <input type=\"date\" id=\"creditDate\" value=\"" + hktTodayStr() + "\"></label>"
+      + "<input type=\"text\" id=\"creditNote\" placeholder=\"備註（可唔填）\" maxlength=\"200\">"
+      + "<button class=\"abtn primary\" type=\"submit\" id=\"creditTopupBtn\">記錄增值</button>"
+      + "</form>";
+    el.className = "credit-box" + warn;
+    el.innerHTML = html;
+    $("creditTopupForm").addEventListener("submit", function(ev){
+      ev.preventDefault();
+      var btn = $("creditTopupBtn");
+      if (btn.disabled) return; // double-click guard: already running
+      var amount = Number($("creditAmount").value);
+      var date = $("creditDate").value || hktTodayStr();
+      var note = $("creditNote").value || "";
+      if (!isFinite(amount) || amount <= 0){ batchMsg("請輸入增值金額（HKD）。", true); return; }
+      if (!confirm("確定記錄增值 " + fmtHkd(amount) + "（" + date + "）？")) return;
+      btn.disabled = true;
+      batchApi("credit-topup-add", { amount_hkd: amount, topped_up_at: date, note: note }).then(function(r){
+        btn.disabled = false;
+        creditState.summary = r.credit;
+        renderCredit();
+        batchMsg("已記錄增值 " + fmtHkd(amount) + "。", false);
+        loadLogs();
+      }).catch(function(e){
+        btn.disabled = false;
+        batchMsg("記錄增值失敗：" + e.message, true);
+      });
+    });
+  }
+
+  function loadCredit(){
+    return batchApi("credit-summary").then(function(s){
+      creditState.summary = s;
+      // Today's USD->HKD rate (Frankfurter, free, no key). Falls back to
+      // 7.85 and says so clearly when the fetch fails or looks wrong.
+      return fetch("https://api.frankfurter.app/latest?from=USD&to=HKD").then(function(r){
+        return r.json();
+      }).then(function(j){
+        var rate = j && j.rates && Number(j.rates.HKD);
+        if (isFinite(rate) && rate > 7 && rate < 8.5){
+          creditState.rate = rate;
+          creditState.rateDate = j.date || "";
+          creditState.rateFallback = false;
+        } else {
+          creditState.rate = CREDIT_FALLBACK_RATE;
+          creditState.rateFallback = true;
+        }
+        renderCredit();
+      }).catch(function(){
+        creditState.rate = CREDIT_FALLBACK_RATE;
+        creditState.rateFallback = true;
+        renderCredit();
+      });
+    }).catch(function(e){
+      $("creditBox").innerHTML = "<div class=\"muted\">增值結餘載入失敗：" + esc(e.message) + "</div>";
+    });
+  }
+
   function loadBatchArticles(){
     var from = $("bFrom").value, to = $("bTo").value;
     // Always "without": the list only ever shows eligible articles
@@ -376,6 +533,7 @@
       for (var i = 0; i < boxes.length; i++) boxes[i].checked = false;
       batchMsg("Batch 已建立：Gemini batch " + r.gemini_batch_name + "（" + r.batch.model + "，共 " + r.batch.article_count + " 篇）。生圖要等一段時間，稍後用 Batch 列表嘅 Check 掣查狀態。", false);
       loadBatchStats();
+      loadCredit();
       loadBatches();
       loadReview();
       loadLogs();
@@ -468,6 +626,7 @@
           });
           loadReview();
           loadBatchStats();
+          loadCredit();
           loadLogs();
         }).catch(function(e){
           btn.disabled = false;
@@ -554,7 +713,7 @@
               var res = r.results && r.results[0];
               if (res && res.status === "approved") batchMsg("已批准並上 R2：" + res.article_slug, false);
               else batchMsg("批准失敗：" + (res && res.error ? res.error : "unknown"), true);
-              loadReview(); loadBatches(); loadBatchStats(); loadLogs();
+              loadReview(); loadBatches(); loadBatchStats(); loadCredit(); loadLogs();
             }).catch(function(e){ btn.disabled = false; batchMsg("批准失敗：" + e.message, true); });
           });
         }
@@ -570,7 +729,7 @@
               var res = r.results && r.results[0];
               if (res && res.status === "rejected") batchMsg("已拒絕：" + res.article_slug, false);
               else batchMsg("拒絕失敗：" + (res && res.error ? res.error : "unknown"), true);
-              loadReview(); loadBatches(); loadBatchStats(); loadLogs();
+              loadReview(); loadBatches(); loadBatchStats(); loadCredit(); loadLogs();
             }).catch(function(e){ btn.disabled = false; batchMsg("拒絕失敗：" + e.message, true); });
           });
         }
@@ -581,7 +740,7 @@
           batchMsg("一次過批准緊 " + items.length + " 張圖…", false);
           runBulk("approve", items).then(function(c){
             batchMsg("已批准 " + c.done + " 張" + (c.failed ? "，失敗 " + c.failed + " 張" : "") + "。", c.failed > 0);
-            loadReview(); loadBatches(); loadBatchStats(); loadLogs();
+            loadReview(); loadBatches(); loadBatchStats(); loadCredit(); loadLogs();
           });
         });
         $("bRejectAll").addEventListener("click", function(){
@@ -591,7 +750,7 @@
           batchMsg("一次過拒絕緊 " + items.length + " 張圖…", false);
           runBulk("reject", items).then(function(c){
             batchMsg("已拒絕 " + c.done + " 張" + (c.failed ? "，失敗 " + c.failed + " 張" : "") + "。", c.failed > 0);
-            loadReview(); loadBatches(); loadBatchStats(); loadLogs();
+            loadReview(); loadBatches(); loadBatchStats(); loadCredit(); loadLogs();
           });
         });
       }
@@ -662,7 +821,7 @@
     });
     chain.then(function(){
       batchCheckRunning = false;
-      loadBatches(); loadReview(); loadBatchStats(); loadLogs();
+      loadBatches(); loadReview(); loadBatchStats(); loadCredit(); loadLogs();
     });
   }
 
@@ -674,6 +833,7 @@
     $("bGenBtn").addEventListener("click", doGenerate);
     $("bLogRefreshBtn").addEventListener("click", loadLogs);
     loadBatchStats();
+    loadCredit();
     loadBatches();
     loadReview();
     loadLogs();

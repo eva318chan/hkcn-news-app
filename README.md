@@ -192,6 +192,36 @@ review list (user decision 2026-11-13, previously Reject deleted the
 staging copy). The usage-stats area shows per-model images generated so
 far + cost so far in USD (generated × batch price) + total.
 
+**Gemini credit tracker (2026-11-13, user request).** The batch page
+shows the estimated remaining Gemini credit (in USD, big; HKD smaller)
+and how many Lite images it can still buy, so the user knows when to
+top up. Anchor numbers (from the user's own Cloud billing screenshots,
+2026-11-13 — do not guess them): prepaid HK$160.00 on 2026-11-12 (Visa
+••••9616, to open the Gemini API for image generation); Google-verified
+usage HK$16.79 as of 2026-11-13, so remaining at anchor = HK$143.21. At
+that same moment the batch page's total spend was US$1.6000 (85
+generated images) — that US$1.60 is already inside the HK$16.79 and is
+NOT subtracted again. Formula: totalUsedHKD = 16.79 + max(0,
+batchTotalSpendUSD − 1.6000) × rate; remainingHKD = sum(top-ups) −
+totalUsedHKD; remainingUSD = remainingHKD / rate; imagesRemaining =
+floor(remainingUSD / 0.0168) (Lite batch price). Today's USD→HKD rate
+is fetched client-side from Frankfurter (free, no key); if that fails
+the page falls back to 7.85 and says so. The section turns amber below
+200 images remaining and red below 50. Top-ups are recorded in the
+`gemini_credit_topups` table (`sql/003-credit-topups.sql` — run it in
+the Supabase SQL Editor; it seeds the HK$160.00 prepayment) through a
+form on the batch page (amount in HKD, date defaulting to today, optional
+note); the endpoint action is `credit-topup-add` (Google SSO only — a
+cron secret can never write the ledger) and every top-up is also written
+to the batch log. The summary (top-ups, anchor constants, current batch
+spend) comes from the `credit-summary` read action, so the page never
+hardcodes a running total. Estimate caveat: it tracks batch-flow spend
+only — direct generations outside the batch flow are not counted, so
+the true Google balance may be slightly lower. Until sql/003 is run,
+the page shows the anchor HK$160.00 prepayment as a fallback and says
+the ledger is not connected yet; the top-up form then fails with a
+clear message instead of pretending to save.
+
 Check reads Gemini's double-nested `inlinedResponses` (verified
 2026-11-13: both `response` and `metadata.output` carry
 `{"inlinedResponses": [...]}` — the endpoint unwraps either shape, so a
@@ -225,7 +255,7 @@ when `GEMINI_API_KEY` was not yet in the live deployment).
 Logging (user request 2026-11-13: "add log"): every batch action is
 logged to console as one JSON line starting with `[batch]` (read it in
 Vercel → hkcn-news-app → Logs / Runtime Logs), and create / check /
-approve / reject / auto-submit / auto-poll are also written to the
+approve / reject / auto-submit / auto-poll / credit-topup-add are also written to the
 `batch_logs` table, shown on
 the batch page under "操作記錄 (Log)" (latest 50, newest first;
 successes and failures both). If the log table is not created yet, the
@@ -235,8 +265,8 @@ One endpoint, `POST /api/admin/batch` (Google SSO for the manual
 actions; `INGEST_SECRET` for the two auto actions `auto-submit` and
 `auto-poll` only — auto auth never grants a manual action), with an
 `action` field: `list-articles`, `create`, `check`, `approve`, `reject`,
-`list-batches`, `list-items`, `list-logs`, `stats`, `auto-submit`,
-`auto-poll`. Batch price is half of standard (verified 2026-11-13: Lite
+`list-batches`, `list-items`, `list-logs`, `stats`, `credit-summary`,
+`credit-topup-add`, `auto-submit`, `auto-poll`. Batch price is half of standard (verified 2026-11-13: Lite
 ~$0.017, Flash 1K ~$0.034, Pro 1K/2K ~$0.067 per image). Prices live in
 `gemini_model_prices` (check weekly; a model with an unknown price is
 shown as "待確認", never guessed); the endpoint falls back to the verified
@@ -403,7 +433,7 @@ INGEST_SECRET=test-secret node scripts/serve.mjs 3100
 | `lib/admin-auth.js` | shared Google SSO session check for all `/api/admin/` routes |
 | `api/admin/config.js`, `api/admin/auth/callback.js` | admin sign-in: client-id config, ID-token exchange (logout is a branch of the callback — server-side cookie expiry) |
 | `api/admin/articles.js` | admin article list / get / create / edit / delete |
-| `api/admin/batch.js` | Gemini Batch API image generation (POC + fully automatic flow): create / check / approve / reject / list-batches / list-items / list-logs / stats / auto-submit / auto-poll, all behind one `action` field — the 12th function |
+| `api/admin/batch.js` | Gemini Batch API image generation (POC + fully automatic flow): create / check / approve / reject / list-batches / list-items / list-logs / stats / credit-summary / credit-topup-add / auto-submit / auto-poll, all behind one `action` field — the 12th function |
 | `data/seed.json`, `data/seed-meta.json` | migration snapshot (regenerate with `scripts/migrate.mjs`) |
 | `design/202611/*.jpg` | the 5 design images in R2 layout |
 | `scripts/migrate.mjs`, `scripts/serve.mjs` | migration + local dev server |

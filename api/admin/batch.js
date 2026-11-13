@@ -18,6 +18,12 @@
 //     list-items    { status, batchId }          batch items (the review list)
 //     list-logs     {}                           latest 50 batch_logs rows
 //     stats         {}                           per-model generated + cost + model prices
+//     credit-summary {}                          Gemini credit ledger: top-ups + anchor
+//                                                constants + current batch spend (USD)
+//     credit-topup-add { amount_hkd, topped_up_at, note }
+//                                                record a Gemini prepayment (Google SSO
+//                                                only — a cron secret can never write the
+//                                                ledger); also written to batch_logs
 //     auto-submit   {}                           AUTO (INGEST_SECRET only): submit ONE Lite batch
 //                                                for all published articles with a prompt, no
 //                                                image and no pending batch item; no-op when none.
@@ -121,6 +127,48 @@ function applyRetryCap(slugs, failedCounts) {
     else submit.push(slug);
   }
   return { submit, capped };
+}
+
+// ---- Gemini credit tracker (user request 2026-11-13) ----
+// The user prepaid HK$160.00 on 2026-11-12 to open the Gemini API for
+// image generation, and wants the batch page to show the estimated
+// remaining credit (in USD) and how many Lite images it can still buy,
+// so they know when to top up. Anchor numbers are from the user's own
+// Cloud billing screenshots (2026-11-13) — do not guess them:
+//   prepaid HK$160.00 (2026-11-12, Visa ••••9616)
+//   Google-verified usage HK$16.79 as of 2026-11-13 -> remaining HK$143.21
+//   batch page total spend at that same moment: US$1.6000 (85 images).
+// The US$1.60 is already inside the HK$16.79, so only batch spend AFTER
+// the anchor is added on top (converted at today's rate). The page
+// fetches today's USD->HKD rate itself (Frankfurter, no key) and does
+// the arithmetic there; this server-side pure function mirrors it
+// exactly and is unit-tested with fixtures.
+const CREDIT_ANCHOR = {
+  date: "2026-11-13",
+  usageHKD: 16.79,        // Google-verified total Gemini usage up to the anchor date
+  batchSpendUSD: 1.6,     // batch page total spend (USD) at the anchor moment
+  topupsHKD: 160.0,       // fallback prepaid total when the top-ups table is not created yet
+  liteBatchPriceUSD: 0.0168,
+};
+const CREDIT_FALLBACK_RATE = 7.85; // only used by the page when the FX fetch fails
+
+function creditEstimate({ topupsTotalHKD, anchorUsageHKD, anchorBatchSpendUSD, batchTotalSpendUSD, rate, liteBatchPriceUSD }) {
+  const r = Number(rate) > 0 ? Number(rate) : CREDIT_FALLBACK_RATE;
+  const price = Number(liteBatchPriceUSD) > 0 ? Number(liteBatchPriceUSD) : 0.0168;
+  // Only batch spend after the anchor counts — the anchor batch spend is
+  // already inside the anchor usage, so a negative delta is clamped to 0
+  // (it can only happen if the stats table is missing and reports 0).
+  const extraSpendUSD = Math.max(0, Number(batchTotalSpendUSD || 0) - Number(anchorBatchSpendUSD || 0));
+  const totalUsedHKD = Number(anchorUsageHKD || 0) + extraSpendUSD * r;
+  const remainingHKD = Number(topupsTotalHKD || 0) - totalUsedHKD;
+  const remainingUSD = remainingHKD / r;
+  return {
+    totalUsedHKD: round2(totalUsedHKD),
+    remainingHKD: round2(remainingHKD),
+    remainingUSD: round2(remainingUSD),
+    imagesRemaining: Math.max(0, Math.floor(remainingUSD / price)),
+    extraSpendUSD: round2(extraSpendUSD),
+  };
 }
 
 function isAutoAuth(req) {
@@ -953,6 +1001,91 @@ async function stats() {
   };
 }
 
+// ---- Gemini credit tracker: read + record top-ups ----
+
+// Read the credit ledger for the batch page: top-ups (from the
+// gemini_credit_topups table when it exists — sql/003-credit-topups.sql),
+// the anchor constants, and the current batch total spend (USD) from
+// stats(). The page fetches today's FX rate itself and computes the
+// remaining credit with the same formula as creditEstimate(). Read-only:
+// console-logged only, never written to batch_logs. If the top-ups table
+// is not created yet, the anchor prepayment (HK$160.00) is used as the
+// fallback total and ledgerLive is false, so the page still shows the
+// right estimate and says the ledger is not connected yet.
+async function creditSummary() {
+  const st = await stats();
+  const { models } = await loadModels();
+  const lite = models.find((m) => m.model === AUTO_MODEL);
+  const litePrice = lite ? Number(lite.batch_price_usd) || 0.0168 : 0.0168;
+  const anchor = { date: CREDIT_ANCHOR.date, usageHKD: CREDIT_ANCHOR.usageHKD, batchSpendUSD: CREDIT_ANCHOR.batchSpendUSD };
+  let topups = null;
+  let ledgerLive = true;
+  try {
+    topups = await sbRows("gemini_credit_topups?select=id,amount_hkd,topped_up_at,note,created_by,created_at&order=topped_up_at.desc,created_at.desc&limit=100");
+  } catch (e) {
+    if (isMissingTable(e)) ledgerLive = false;
+    else throw e;
+  }
+  if (!ledgerLive || !topups) {
+    return {
+      ok: true, ledgerLive: false,
+      topups: [{ amount_hkd: CREDIT_ANCHOR.topupsHKD, topped_up_at: "2026-11-12", note: "Prepaid to open the Gemini API for image generation (Visa ••••9616)", created_by: "seed", fallback: true }],
+      topupsTotalHKD: CREDIT_ANCHOR.topupsHKD,
+      anchor, batchTotalSpendUSD: st.total.cost_usd,
+      liteBatchPriceUSD: litePrice, fallbackRate: CREDIT_FALLBACK_RATE,
+    };
+  }
+  const total = topups.reduce((s, t) => s + Number(t.amount_hkd || 0), 0);
+  return {
+    ok: true, ledgerLive: true,
+    topups: topups.map((t) => ({ id: t.id, amount_hkd: Number(t.amount_hkd), topped_up_at: t.topped_up_at, note: t.note || "", created_by: t.created_by || "" })),
+    topupsTotalHKD: round2(total),
+    anchor, batchTotalSpendUSD: st.total.cost_usd,
+    liteBatchPriceUSD: litePrice, fallbackRate: CREDIT_FALLBACK_RATE,
+  };
+}
+
+// Record a Gemini prepayment (top-up). Google SSO admin session only —
+// the dispatcher already refuses INGEST_SECRET for every action except
+// auto-submit/auto-poll, so a cron secret can never write the ledger.
+// Validates the amount (positive, at most HK$100,000 — above that is
+// almost certainly a typo) and the date. Also written to batch_logs, so
+// a top-up has an audit trail on the batch page. Returns the created row
+// plus a fresh credit summary so the page can refresh its numbers.
+// Requires sql/003-credit-topups.sql to be run — a missing table is a
+// 503 with a clear instruction, never a silent fallback (a write must
+// not pretend it succeeded).
+async function creditTopupAdd(body, email) {
+  const amount = Number(body.amount_hkd);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 100000) {
+    throw err(400, "amount_hkd must be a positive number no larger than HK$100,000");
+  }
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(body.topped_up_at || "") ? body.topped_up_at : hktToday();
+  const d = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== date) {
+    throw err(400, `invalid topped_up_at date: ${date} (use YYYY-MM-DD)`);
+  }
+  const note = String(body.note || "").slice(0, 200);
+  let created;
+  try {
+    created = await sbFetch("gemini_credit_topups", {
+      method: "POST", prefer: "return=representation",
+      body: { amount_hkd: round2(amount), topped_up_at: date, note: note || null, created_by: email || null },
+    });
+  } catch (e) {
+    if (isMissingTable(e)) throw err(503, "credit top-ups table is not created yet — run sql/003-credit-topups.sql in the Supabase SQL Editor, then try again");
+    throw e;
+  }
+  const row = Array.isArray(created.json) && created.json.length ? created.json[0] : null;
+  if (!row || !row.id) throw err(502, "top-up could not be saved");
+  const summary = await creditSummary();
+  return {
+    ok: true,
+    topup: { id: row.id, amount_hkd: Number(row.amount_hkd), topped_up_at: row.topped_up_at, note: row.note || "", created_by: row.created_by || "" },
+    credit: summary,
+  };
+}
+
 // ---- Logging (user request 2026-11-13: "add log") ----
 // Every action is logged to console as one JSON line (Vercel Runtime Logs),
 // and create/check/approve/reject are also written to the batch_logs table
@@ -973,7 +1106,7 @@ function logLine({ actor, action, batchId, detail, ok, error }) {
   } catch (e) { /* logging must never break the action */ }
 }
 
-const DB_LOGGED_ACTIONS = new Set(["create", "check", "approve", "reject", "auto-submit", "auto-poll"]);
+const DB_LOGGED_ACTIONS = new Set(["create", "check", "approve", "reject", "auto-submit", "auto-poll", "credit-topup-add"]);
 
 async function logDb(entry) {
   if (!DB_LOGGED_ACTIONS.has(entry.action)) return;
@@ -1031,6 +1164,9 @@ function summarize(action, body, out) {
       const done = out.results.filter((r) => r.status === "approved" || r.status === "rejected").length;
       const errs = out.results.filter((r) => r.status === "error").length;
       return { batchId: null, detail: `items=${out.results.length}, done=${done}, errors=${errs}` };
+    }
+    if (action === "credit-topup-add" && out && out.topup) {
+      return { batchId: null, detail: `top-up HK$${Number(out.topup.amount_hkd).toFixed(2)}, date=${out.topup.topped_up_at}${out.topup.note ? ", note=" + out.topup.note : ""}`.slice(0, 500) };
     }
   } catch (e) { /* fall through */ }
   return { batchId: String(body.batchId || body.batch_id || "") || null, detail: null };
@@ -1097,6 +1233,8 @@ module.exports = async (req, res) => {
       case "list-items": out = await listItems(body); break;
       case "list-logs": out = await listLogs(); break;
       case "stats": out = await stats(); break;
+      case "credit-summary": out = await creditSummary(); break;
+      case "credit-topup-add": out = await creditTopupAdd(body, email); break;
       case "auto-submit":
         if (!auto) { res.status(401).json({ ok: false, error: "unauthorized: auto-submit needs x-ingest-secret" }); return; }
         out = await autoSubmit(); break;
@@ -1105,7 +1243,7 @@ module.exports = async (req, res) => {
         out = await autoPoll(); break;
       default:
         await logAction({ actor: email, action: action || "(none)", ok: false, error: "unknown action" });
-        res.status(400).json({ ok: false, error: `unknown action: ${action || "(none)"} — use list-articles, create, check, approve, reject, list-batches, list-items, list-logs, stats, auto-submit or auto-poll` });
+        res.status(400).json({ ok: false, error: `unknown action: ${action || "(none)"} — use list-articles, create, check, approve, reject, list-batches, list-items, list-logs, stats, credit-summary, credit-topup-add, auto-submit or auto-poll` });
         return;
     }
     const s = summarize(action, body, out);
@@ -1132,3 +1270,6 @@ module.exports.resultKey = resultKey;
 module.exports.indexResultsByKey = indexResultsByKey;
 module.exports.applyRetryCap = applyRetryCap;
 module.exports.MAX_AUTO_ATTEMPTS = MAX_AUTO_ATTEMPTS;
+module.exports.creditEstimate = creditEstimate;
+module.exports.CREDIT_ANCHOR = CREDIT_ANCHOR;
+module.exports.CREDIT_FALLBACK_RATE = CREDIT_FALLBACK_RATE;

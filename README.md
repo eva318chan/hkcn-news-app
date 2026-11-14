@@ -403,7 +403,10 @@ Supabase (needs the env vars; run only after the SQL migration).
   Telegram, Weibo (direct share URL) and WeChat (QR code — WeChat has no web
   share URL), plus copy link. Panel labels follow the language switcher. All
   client-side in `api/article-page.js` (no new function — the app is at the
-  12-function Hobby limit).
+  12-function Hobby limit). The homepage list uses the same treatment
+  (2026-11-14): one ⤴ button per card, and one shared panel for the whole
+  list (built once by `assets/app.js`, same links and wording, panel CSS
+  injected by the same file and following the theme variables).
 - **Sitemap/RSS** use the request host (staging host on staging,
   `hkcnexpress.com` in production via `SITE_URL`), so compare slugs, not hosts.
 - **Ingest in seed mode returns 503** (after auth): there is no database to

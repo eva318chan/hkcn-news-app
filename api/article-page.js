@@ -25,7 +25,7 @@ const READ_ORIG = { en: "Read original \u2192", zh_hant: "閱讀原文 \u2192", 
 // Telegram, Weibo (service.weibo.com share URL) and WeChat (QR code scanned
 // with the phone — WeChat has no web share URL). Copy link is in the panel.
 const SHARE_BTN = { en: "Share", zh_hant: "分享", zh_hans: "分享" };
-const SHARE_PANEL_TITLE = { en: "Share this article", zh_hant: "分享呢篇文章", zh_hans: "分享这篇文章" };
+const SHARE_PANEL_TITLE = { en: "Share this article", zh_hant: "分享這篇文章", zh_hans: "分享这篇文章" };
 const SHARE_COPY = { en: "Copy link", zh_hant: "複製連結", zh_hans: "复制链接" };
 const SHARE_COPIED = { en: "Copied", zh_hant: "已複製", zh_hans: "已复制" };
 const SHARE_WECHAT_HINT = { en: "Scan with WeChat to share", zh_hant: "用微信掃一掃分享", zh_hans: "用微信扫一扫分享" };
@@ -289,7 +289,7 @@ ${extrasHtml}  <div class="tags article-tags">${tags}</div>
     <button class="abtn" style="font-size:15px;padding:10px 18px" type="button" id="shareBtn">分享</button>
   </div>
   <div id="sharePanel" class="share-panel" hidden>
-    <div class="share-panel-head"><span id="sharePanelTitle">分享呢篇文章</span><button type="button" id="shareClose" aria-label="close">✕</button></div>
+    <div class="share-panel-head"><span id="sharePanelTitle">分享這篇文章</span><button type="button" id="shareClose" aria-label="close">✕</button></div>
     <div class="share-grid">
       <a class="share-item" id="shareWa" target="_blank" rel="noopener">WhatsApp</a>
       <a class="share-item" id="shareFb" target="_blank" rel="noopener">Facebook</a>

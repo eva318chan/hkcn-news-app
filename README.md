@@ -397,6 +397,13 @@ Supabase (needs the env vars; run only after the SQL migration).
   daily JSON), including captions and the AI-image footer where present.
   The switcher also translates the source name, the read-original and share
   buttons and the footer (2026-11-14: these were hardcoded Traditional before).
+  Share is one button, not a row of ten (2026-11-14): on mobile it opens the
+  system share sheet (`navigator.share` — the phone's own apps, including
+  WeChat/WhatsApp); on desktop it opens a panel with WhatsApp, Facebook, X,
+  Telegram, Weibo (direct share URL) and WeChat (QR code — WeChat has no web
+  share URL), plus copy link. Panel labels follow the language switcher. All
+  client-side in `api/article-page.js` (no new function — the app is at the
+  12-function Hobby limit).
 - **Sitemap/RSS** use the request host (staging host on staging,
   `hkcnexpress.com` in production via `SITE_URL`), so compare slugs, not hosts.
 - **Ingest in seed mode returns 503** (after auth): there is no database to

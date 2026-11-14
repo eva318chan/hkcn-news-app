@@ -395,8 +395,8 @@ Supabase (needs the env vars; run only after the SQL migration).
 - **Article pages** replicate the static template (same classes, same header,
   same language-switch script — now fetching `/api/article` instead of the
   daily JSON), including captions and the AI-image footer where present.
-  The switcher also translates the source name, the read-original button and
-  the footer (2026-11-14: these three were hardcoded Traditional before).
+  The switcher also translates the source name, the read-original and share
+  buttons and the footer (2026-11-14: these were hardcoded Traditional before).
 - **Sitemap/RSS** use the request host (staging host on staging,
   `hkcnexpress.com` in production via `SITE_URL`), so compare slugs, not hosts.
 - **Ingest in seed mode returns 503** (after auth): there is no database to

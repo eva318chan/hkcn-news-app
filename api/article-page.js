@@ -19,6 +19,7 @@ const STANDARD_FOOTER = "摘要由本站重新編寫，圖片版權歸原新聞�
 // via /api/article). Source names arrive from the DB as one string, so known
 // sources are mapped here; anything unlisted falls back to the stored name.
 const READ_ORIG = { en: "Read original \u2192", zh_hant: "閱讀原文 \u2192", zh_hans: "阅读原文 \u2192" };
+const SHARE_FB = { en: "Share to Facebook", zh_hant: "分享到 Facebook", zh_hans: "分享到 Facebook" };
 const FOOTER_TEXT = {
   en: "Summary rewritten by this site. Image copyright belongs to the original news organisation.",
   zh_hant: STANDARD_FOOTER,
@@ -52,6 +53,7 @@ const LANG_SCRIPT = `
   var SITE='中港新聞速報';
   var READ_ORIG=${JSON.stringify(READ_ORIG)};
   var FOOTER_TEXT=${JSON.stringify(FOOTER_TEXT)};
+  var SHARE_FB=${JSON.stringify(SHARE_FB)};
   var SOURCE_NAMES=${JSON.stringify(SOURCE_NAMES)};
   function esc(s){return String(s).replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}
   function setLogo(){var dark=document.documentElement.getAttribute('data-theme')==='dark';var bn=document.getElementById('brandName');if(bn&&bn.style.display==='flex')return;var l=document.getElementById('logoLight'),d=document.getElementById('logoDark');if(l&&d){l.style.display=dark?'none':'';d.style.display=dark?'':'none';}}
@@ -68,6 +70,8 @@ const LANG_SCRIPT = `
     document.documentElement.lang = LANG==='en'?'en':(LANG==='zh_hans'?'zh-CN':'zh-Hant');
     var ro=document.getElementById('readOrig');
     if(ro) ro.textContent=READ_ORIG[LANG]||READ_ORIG.zh_hant;
+    var sf=document.getElementById('shareFb');
+    if(sf) sf.textContent=SHARE_FB[LANG]||SHARE_FB.zh_hant;
     var pf=document.getElementById('pageFooter');
     if(pf&&pf.getAttribute('data-standard')==='1') pf.textContent=FOOTER_TEXT[LANG]||FOOTER_TEXT.zh_hant;
     if(!a) return;
@@ -188,7 +192,7 @@ ${caption}  <div class="card-top"><span class="cat-tag">${esc(a.category)}</span
 ${extrasHtml}  <div class="tags article-tags">${tags}</div>
   <div style="margin:20px 0;display:flex;gap:10px;flex-wrap:wrap">
     <a class="abtn primary" style="font-size:15px;padding:10px 22px" href="${srcUrl}" target="_blank" rel="noopener" id="readOrig">閱讀原文 →</a>
-    <a class="abtn" style="font-size:15px;padding:10px 18px" href="https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}" target="_blank" rel="noopener">分享到 Facebook</a>
+    <a class="abtn" style="font-size:15px;padding:10px 18px" href="https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}" target="_blank" rel="noopener" id="shareFb">分享到 Facebook</a>
   </div>
 </main>
 <footer><p id="pageFooter"${footerIsStandard ? ' data-standard="1"' : ''}>${footer}</p></footer>

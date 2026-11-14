@@ -122,8 +122,8 @@ function pageHTML(a, base) {
   const tags = (a.tags.zh_hant || []).map((g) => `<button class="tag">#${esc(g)}</button>`).join("");
   const url = `${base}/a/${a.id}.html`;
   const img = a.image_url
-    ? `<div class="article-hero"><img src="${esc(a.image_url)}" alt="" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;noimg&quot;>🏅</div>'"></div>`
-    : `<div class="article-hero"><div class="noimg">🏅</div></div>`;
+    ? `<div class="article-hero"><img src="${esc(a.image_url)}" alt="" referrerpolicy="no-referrer" onerror="this.closest('.article-hero').remove()"></div>`
+    : "";
   const caption = a.image_caption
     ? `<p style="font-size:13px;color:#888;margin:8px 0 0">${esc(a.image_caption)}</p>`
     : "";
@@ -135,7 +135,7 @@ function pageHTML(a, base) {
     if (!u) return "";
     const cap = e.caption
       ? `<p style="font-size:13px;color:#888;margin:8px 0 0">${esc(e.caption)}</p>` : "";
-    return `<div class="article-hero" style="margin-top:16px"><img src="${u}" alt="" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;noimg&quot;>🏅</div>'"></div>${cap}`;
+    return `<div class="article-hero" style="margin-top:16px"><img src="${u}" alt="" referrerpolicy="no-referrer" onerror="this.closest('.article-hero').remove()"></div>${cap}`;
   }).join("\n");
   const ogImage = a.image_url ? `<meta property="og:image" content="${esc(a.image_url)}">\n` : "";
   const footer = esc(a.footer_note || STANDARD_FOOTER);

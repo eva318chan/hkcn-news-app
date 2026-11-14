@@ -15,6 +15,26 @@ const CATS_ZH = {hk:"港聞",china:"中國",world:"國際",finance:"財經",tech
 
 const STANDARD_FOOTER = "摘要由本站重新編寫，圖片版權歸原新聞機構所有。";
 
+// UI strings that follow the language switcher (title/summary/tags already do
+// via /api/article). Source names arrive from the DB as one string, so known
+// sources are mapped here; anything unlisted falls back to the stored name.
+const READ_ORIG = { en: "Read original \u2192", zh_hant: "閱讀原文 \u2192", zh_hans: "阅读原文 \u2192" };
+const FOOTER_TEXT = {
+  en: "Summary rewritten by this site. Image copyright belongs to the original news organisation.",
+  zh_hant: STANDARD_FOOTER,
+  zh_hans: "摘要由本站重新编写，图片版权归原新闻机构所有。",
+};
+const SOURCE_NAMES = {
+  "香港電台": { en: "RTHK", zh_hans: "香港电台" },
+  "政府新聞處": { en: "Information Services Department", zh_hans: "政府新闻处" },
+  "京報網": { zh_hans: "京报网" },
+  "立康醫療": { zh_hans: "立康医疗" },
+  "都市日報": { zh_hans: "都市日报" },
+  "UHK 港生活": { zh_hans: "UHK 港生活" },
+  "新假期": { zh_hans: "新假期" },
+  "Dim Sum Daily": { zh_hans: "Dim Sum Daily" },
+};
+
 // published_at is an instant (Supabase renders timestamptz as UTC, seed rows
 // carry +08:00); display it as Hong Kong wall time, not the raw UTC string
 // (an early-morning HKT article otherwise shows the previous day).
@@ -30,6 +50,9 @@ function fmtDateTime(iso) {
 const LANG_SCRIPT = `
 (function(){
   var SITE='中港新聞速報';
+  var READ_ORIG=${JSON.stringify(READ_ORIG)};
+  var FOOTER_TEXT=${JSON.stringify(FOOTER_TEXT)};
+  var SOURCE_NAMES=${JSON.stringify(SOURCE_NAMES)};
   function esc(s){return String(s).replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}
   function setLogo(){var dark=document.documentElement.getAttribute('data-theme')==='dark';var bn=document.getElementById('brandName');if(bn&&bn.style.display==='flex')return;var l=document.getElementById('logoLight'),d=document.getElementById('logoDark');if(l&&d){l.style.display=dark?'none':'';d.style.display=dark?'':'none';}}
   var LANG='zh_hant';
@@ -43,6 +66,10 @@ const LANG_SCRIPT = `
   function apply(a){
     setActive();
     document.documentElement.lang = LANG==='en'?'en':(LANG==='zh_hans'?'zh-CN':'zh-Hant');
+    var ro=document.getElementById('readOrig');
+    if(ro) ro.textContent=READ_ORIG[LANG]||READ_ORIG.zh_hant;
+    var pf=document.getElementById('pageFooter');
+    if(pf&&pf.getAttribute('data-standard')==='1') pf.textContent=FOOTER_TEXT[LANG]||FOOTER_TEXT.zh_hant;
     if(!a) return;
     var h1=document.querySelector('h1.article-title');
     var lead=document.querySelector('p.article-summary');
@@ -56,6 +83,12 @@ const LANG_SCRIPT = `
       var h='';
       for(var i=0;i<arr.length;i++) h+='<button class="tag">#'+esc(arr[i])+'</button>';
       tags.innerHTML=h;
+    }
+    var sn=document.getElementById('srcName');
+    if(sn){
+      var n=(a.source&&(a.source.name||a.source))||'';
+      var m=SOURCE_NAMES[n];
+      sn.textContent=(m&&m[LANG])||n;
     }
     if(t) document.title=t+' | '+SITE;
   }
@@ -106,6 +139,7 @@ function pageHTML(a, base) {
   }).join("\n");
   const ogImage = a.image_url ? `<meta property="og:image" content="${esc(a.image_url)}">\n` : "";
   const footer = esc(a.footer_note || STANDARD_FOOTER);
+  const footerIsStandard = !a.footer_note;
   const srcName = esc(a.source?.name || "");
   const srcUrl = esc(a.source?.url || "");
   return `<!DOCTYPE html>
@@ -148,16 +182,16 @@ function logoFallback(){var b=document.getElementById("brandName");if(b)b.style.
 </header>
 <main class="article-wrap">
 ${img}
-${caption}  <div class="card-top"><span class="cat-tag">${esc(a.category)}</span><span>${esc(fmtDateTime(a.published_at))}</span><span> · ${srcName}</span></div>
+${caption}  <div class="card-top"><span class="cat-tag">${esc(a.category)}</span><span>${esc(fmtDateTime(a.published_at))}</span><span> · <span id="srcName">${srcName}</span></span></div>
   <h1 class="article-title">${esc(zhTitle)}</h1>
   <p class="lead article-summary">${esc(zhSummary)}</p>
 ${extrasHtml}  <div class="tags article-tags">${tags}</div>
   <div style="margin:20px 0;display:flex;gap:10px;flex-wrap:wrap">
-    <a class="abtn primary" style="font-size:15px;padding:10px 22px" href="${srcUrl}" target="_blank" rel="noopener">閱讀原文 →</a>
+    <a class="abtn primary" style="font-size:15px;padding:10px 22px" href="${srcUrl}" target="_blank" rel="noopener" id="readOrig">閱讀原文 →</a>
     <a class="abtn" style="font-size:15px;padding:10px 18px" href="https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}" target="_blank" rel="noopener">分享到 Facebook</a>
   </div>
 </main>
-<footer><p>${footer}</p></footer>
+<footer><p id="pageFooter"${footerIsStandard ? ' data-standard="1"' : ''}>${footer}</p></footer>
 <script>${LANG_SCRIPT}</script>
 </body>
 </html>

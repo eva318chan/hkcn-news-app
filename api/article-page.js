@@ -88,10 +88,9 @@ function pageHTML(a, base) {
   const zhSummary = a.summary.zh_hant || a.summary.en || "";
   const tags = (a.tags.zh_hant || []).map((g) => `<button class="tag">#${esc(g)}</button>`).join("");
   const url = `${base}/a/${a.id}.html`;
-  const catName = esc(CATS_ZH[a.category] || "其他");
   const img = a.image_url
-    ? `<div class="article-hero"><img src="${esc(a.image_url)}" alt="" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;noimg&quot;>🏅</div>'"><span class="hero-badge">${catName}</span></div>`
-    : `<div class="article-hero"><div class="noimg">🏅</div><span class="hero-badge">${catName}</span></div>`;
+    ? `<div class="article-hero"><img src="${esc(a.image_url)}" alt="" referrerpolicy="no-referrer" onerror="this.outerHTML='<div class=&quot;noimg&quot;>🏅</div>'"></div>`
+    : `<div class="article-hero"><div class="noimg">🏅</div></div>`;
   const caption = a.image_caption
     ? `<p style="font-size:13px;color:#888;margin:8px 0 0">${esc(a.image_caption)}</p>`
     : "";

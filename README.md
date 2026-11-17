@@ -414,6 +414,12 @@ Supabase (needs the env vars; run only after the SQL migration).
   version). The homepage (`index.html`) declares the same for its own URL.
 - **Sitemap/RSS** use the request host (staging host on staging,
   `hkcnexpress.com` in production via `SITE_URL`), so compare slugs, not hosts.
+  A Google News sitemap lives at `/news-sitemap.xml` (2026-11-17): the same
+  function as the regular sitemap (`?news=1` via the vercel.json rewrite — the
+  app is at the 12-function Hobby limit, so no new function), only articles
+  from the last 48 hours, with `<news:news>` (publication 中港新聞速報,
+  language zh-tw); submit it in Search Console under the www.hkcnexpress.com
+  property.
 - **Ingest in seed mode returns 503** (after auth): there is no database to
   write to, and staging must not pretend an insert succeeded. The 401
   (wrong/missing secret) and 400 (bad body) paths are testable on staging; the

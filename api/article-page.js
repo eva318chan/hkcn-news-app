@@ -29,6 +29,13 @@ const SHARE_PANEL_TITLE = { en: "Share this article", zh_hant: "分享這篇文�
 const SHARE_COPY = { en: "Copy link", zh_hant: "複製連結", zh_hans: "复制链接" };
 const SHARE_COPIED = { en: "Copied", zh_hant: "已複製", zh_hans: "已复制" };
 const SHARE_WECHAT_HINT = { en: "Scan with WeChat to share", zh_hant: "用微信掃一掃分享", zh_hans: "用微信扫一扫分享" };
+
+// Canonical URL: always the primary www host. The same article is served
+// from both apex and www (siteUrl follows the request host), and with no
+// declared canonical Google picks one itself — 2026-11-17 Search Console:
+// 21 sports www pages listed as duplicates because Google chose the apex
+// version. A fixed www canonical stops that.
+const CANONICAL_BASE = "https://www.hkcnexpress.com";
 const FOOTER_TEXT = {
   en: "Summary rewritten by this site. Image copyright belongs to the original news organisation.",
   zh_hant: STANDARD_FOOTER,
@@ -220,6 +227,7 @@ function pageHTML(a, base) {
   const desc = shortDesc(zhSummary);
   const tags = (a.tags.zh_hant || []).map((g) => `<button class="tag">#${esc(g)}</button>`).join("");
   const url = `${base}/a/${a.id}.html`;
+  const canonicalUrl = CANONICAL_BASE + "/a/" + a.id + ".html";
   const img = a.image_url
     ? `<div class="article-hero"><img src="${esc(a.image_url)}" alt="" referrerpolicy="no-referrer" onerror="this.closest('.article-hero').remove()"></div>`
     : "";
@@ -253,6 +261,7 @@ function pageHTML(a, base) {
 <meta property="og:title" content="${esc(zhTitle)}">
 <meta property="og:description" content="${esc(desc)}">
 ${ogImage}<meta property="og:url" content="${esc(url)}">
+<link rel="canonical" href="${esc(canonicalUrl)}">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="../assets/logo-light.png">
 <link rel="stylesheet" href="../assets/style.css">

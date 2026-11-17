@@ -407,6 +407,11 @@ Supabase (needs the env vars; run only after the SQL migration).
   (2026-11-14): one ⤴ button per card, and one shared panel for the whole
   list (built once by `assets/app.js`, same links and wording, panel CSS
   injected by the same file and following the theme variables).
+  Every article page also declares a canonical link to its
+  www.hkcnexpress.com URL (2026-11-17): the same article is served from apex
+  and www, and with no declared canonical Google picks one itself (the sports
+  site had 21 www pages listed as duplicates because Google chose the apex
+  version). The homepage (`index.html`) declares the same for its own URL.
 - **Sitemap/RSS** use the request host (staging host on staging,
   `hkcnexpress.com` in production via `SITE_URL`), so compare slugs, not hosts.
 - **Ingest in seed mode returns 503** (after auth): there is no database to

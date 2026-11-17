@@ -42,12 +42,22 @@ module.exports = async (req, res) => {
   try {
     if (req.query && req.query.news) {
       // Google News sitemap: last 48 hours only. listArticles sorts
-      // published_at DESC, so page 1 (100 newest) always covers the window.
+      // published_at DESC, so page through until a page ends before the
+      // cutoff — the site publishes ~170 articles per 48h, so page 1's 100
+      // is not enough. Cap at Google's 1,000-URL limit.
       const cutoff = Date.now() - 48 * 3600 * 1000;
-      const { articles } = await listArticles({ limit: 100, page: 1 });
-      const recent = articles
-        .filter((a) => a.published_at && new Date(a.published_at).getTime() >= cutoff)
-        .slice(0, 1000);
+      const recent = [];
+      for (let p = 1; p <= 10 && recent.length < 1000; p++) {
+        const { articles } = await listArticles({ limit: 100, page: p });
+        if (!articles.length) break;
+        let done = false;
+        for (const a of articles) {
+          if (!a.published_at || new Date(a.published_at).getTime() < cutoff) { done = true; break; }
+          recent.push(a);
+          if (recent.length >= 1000) break;
+        }
+        if (done || recent.length >= 1000) break;
+      }
       const base = siteUrl(req);
       const urls = recent.map((a) => {
         const title = (a.title && (a.title.zh_hant || a.title.zh_hans || a.title.en)) || a.id;

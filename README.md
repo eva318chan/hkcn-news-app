@@ -412,6 +412,12 @@ Supabase (needs the env vars; run only after the SQL migration).
   and www, and with no declared canonical Google picks one itself (the sports
   site had 21 www pages listed as duplicates because Google chose the apex
   version). The homepage (`index.html`) declares the same for its own URL.
+  Publish times are always Hong Kong time (2026-11-17): the list cards show
+  the absolute time plus a relative time for the last 24 hours
+  ("11/17 22:23 · 2 小時前"), the article page shows the full date with the
+  timezone label ("2026年11月17日 22:23（香港時間）"), all in three
+  languages; the relative time is computed in the browser and refreshed every
+  minute, never baked into server HTML (the article page is cached 60s).
 - **Sitemap/RSS** use the request host (staging host on staging,
   `hkcnexpress.com` in production via `SITE_URL`), so compare slugs, not hosts.
   A Google News sitemap lives at `/news-sitemap.xml` (2026-11-17): the same

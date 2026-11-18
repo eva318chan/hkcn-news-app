@@ -464,4 +464,4 @@ INGEST_SECRET=test-secret node scripts/serve.mjs 3100
 | `design/202611/*.jpg` | the 5 design images in R2 layout |
 | `scripts/migrate.mjs`, `scripts/serve.mjs` | migration + local dev server |
 | `supabase/migrations/001_articles.sql` | DB schema + RLS + `articles_meta()` |
-| `vercel.json` | rewrites `/a/:slug.html`, `/sitemap.xml`, `/rss.xml`; 307 redirect `/assets/design/*` → `/design/202611/*` |
+| `vercel.json` | rewrites `/a/:slug.html`, `/sitemap.xml`, `/rss.xml`; 307 redirect `/assets/design/*` → `/design/202611/*`; functions run in `hkg1` (Hong Kong, 2026-11-18) — closest to HK readers and the Singapore Supabase DB |

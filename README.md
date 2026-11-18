@@ -1,9 +1,6 @@
 # hkcn-news-app — 港速報 web app (parallel build)
 
-New application for 港速報 / HK-China News Express, built **in parallel** with the
-existing static site. The static site (`eva318chan/hkcn-news` → hkcnexpress.com)
-keeps running and publishing untouched until this app passes parity and is
-switched over. Sports site (`hksports.hk`) is out of scope for this repo.
+New application for 港速報 / HK-China News Express. Since 2026-11-18 it is the only live site: all four hosts (`hkcnexpress.com`, `www.hkcnexpress.com`, `hkcnexpress.hk`, `www.hkcnexpress.hk`) serve this app. The old static site (`eva318chan/hkcn-news`, Vercel project `hkcn-news`) was stopped the same day; its repo stays as an archive only. Sports site (`hksports.hk`) is out of scope for this repo.
 
 Plan: `~/workspace/goals/hkcn-news-sites-backfill-and-scheduled-updates/files/hkcn-news-r2-db-migration-plan.md`
 

@@ -11,7 +11,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 }[c]));
 
-const CATS_ZH = {hk:"港聞",china:"中國",world:"國際",finance:"財經",tech:"科技",entertainment:"娛樂",others:"其他"};
+const CATS_ZH = {hk:"港聞",china:"中國",world:"國際",finance:"財經",tech:"科技",entertainment:"娛樂",others:"副刊",columns:"名人專欄"};
 
 const STANDARD_FOOTER = "摘要由本站重新編寫，圖片版權歸原新聞機構所有。";
 

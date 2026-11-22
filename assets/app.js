@@ -8,7 +8,8 @@ const CATS = {
   finance:      {en:"Finance",      zh_hant:"財經",   zh_hans:"财经"},
   tech:         {en:"Tech",         zh_hant:"科技",   zh_hans:"科技"},
   entertainment:{en:"Entertainment",zh_hant:"娛樂",   zh_hans:"娱乐"},
-  others:       {en:"Others",       zh_hant:"其他",   zh_hans:"其他"}
+  others:       {en:"Features",     zh_hant:"副刊",   zh_hans:"副刊"},
+  columns:      {en:"Columns",      zh_hant:"名人專欄", zh_hans:"名人专栏"}
 };
 
 const STR = {

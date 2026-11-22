@@ -476,3 +476,12 @@ INGEST_SECRET=test-secret node scripts/serve.mjs 3100
 4. 地點唔明確（冇講明邊度）先至用 SOP 嗰套去地域化通用背景。
 
 唔肯定個地方係點樣就唔好估——寧缺勿錯。
+
+## Categories (updated 2026-11-23, owner's decision)
+
+Category keys in the DB: `hk` 港聞, `china` 中國, `world` 國際, `finance` 財經,
+`tech` 科技, `entertainment` 娛樂, `others` **副刊** (label renamed from 其他;
+the key stays `others`, so no data migration), `columns` **名人專欄** (new).
+Labels live in `assets/app.js` (`CATS`) and `api/article-page.js` (`CATS_ZH`).
+Hard news must never be filed under `others`: foreign news goes to `world`,
+Hong Kong news to `hk`. `others` is for supplement/feature content only.

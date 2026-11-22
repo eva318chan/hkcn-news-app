@@ -485,3 +485,5 @@ the key stays `others`, so no data migration), `columns` **名人專欄** (new).
 Labels live in `assets/app.js` (`CATS`) and `api/article-page.js` (`CATS_ZH`).
 Hard news must never be filed under `others`: foreign news goes to `world`,
 Hong Kong news to `hk`. `others` is for supplement/feature content only.
+Sports news is never filed on the news site under any category; it belongs to
+the sports site (hksports.hk) only.

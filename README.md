@@ -511,3 +511,7 @@ How it works (`POST /api/admin/batch`, `x-ingest-secret`):
   still stored on every article and still shown on list cards.
 - The category tag shows the proper label (e.g. 娛樂), not the raw key
   (`entertainment`), and follows the language switch (繁／简／EN).
+
+## Batch 重做圖片：auto-resubmit（2026-11-24）
+
+驗圖唔過關嘅圖一律經 batch（半價）重做，唔直接正價生。做法：先 ingest 改好嘅 `image_prompt`（`image_url` 留空），再 POST `/api/admin/batch` `{ "action": "auto-resubmit", "slugs": [...] }`（`x-ingest-secret`）。每篇最多重做 1 次（已有 2 個 rejected 項目就拒絕，篇文維持無圖）。之後照常 `auto-poll` → 親眼驗 → `auto-approve`／`auto-reject`。代價係冇即時圖，要等下一輪。

@@ -142,6 +142,13 @@ const LANG_SCRIPT = `
       for(var i=0;i<arr.length;i++) h+='<button class="tag">#'+esc(arr[i])+'</button>';
       tags.innerHTML=h;
     }
+    var ct=document.getElementById('catTag');
+    if(ct){
+      var CL={hk:{en:'HK News',zh_hans:'港闻'},china:{en:'China',zh_hans:'中国'},world:{en:'World',zh_hans:'国际'},finance:{en:'Finance',zh_hans:'财经'},tech:{en:'Tech',zh_hans:'科技'},entertainment:{en:'Entertainment',zh_hans:'娱乐'},others:{en:'Features',zh_hans:'副刊'},columns:{en:'Columns',zh_hans:'名人专栏'}};
+      var ck=ct.getAttribute('data-cat');
+      if(!ct.getAttribute('data-zh')) ct.setAttribute('data-zh',ct.textContent);
+      ct.textContent=(LANG!=='zh_hant'&&CL[ck]&&CL[ck][LANG])||ct.getAttribute('data-zh');
+    }
     var sn=document.getElementById('srcName');
     if(sn){
       var n=(a.source&&(a.source.name||a.source))||'';
@@ -344,7 +351,7 @@ function logoFallback(){var b=document.getElementById("brandName");if(b)b.style.
 </header>
 <main class="article-wrap">
 ${img}
-${caption}  <div class="card-top"><span class="cat-tag">${esc(a.category)}</span><span id="pubDate" data-ts="${esc(a.published_at)}">${esc(fmtFullDateHant(a.published_at))}</span><span> · <span id="srcName">${srcName}</span></span></div>
+${caption}  <div class="card-top"><span class="cat-tag" id="catTag" data-cat="${esc(a.category)}">${esc(CATS_ZH[a.category] || a.category)}</span><span id="pubDate" data-ts="${esc(a.published_at)}">${esc(fmtFullDateHant(a.published_at))}</span></div>
   <h1 class="article-title">${esc(zhTitle)}</h1>
   <p class="lead article-summary">${esc(zhSummary)}</p>
 ${extrasHtml}  <div class="tags article-tags">${tags}</div>

@@ -307,7 +307,7 @@ function pageHTML(a, base) {
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="中港新聞速報 HK-China News Express">
 <meta property="og:title" content="${esc(zhTitle)}">
-<meta property="og:description" content="${esc(desc)}">
+<meta property="og:description" content="${esc(twDesc)}">
 ${ogImage}<meta property="og:url" content="${esc(url)}">
 <link rel="canonical" href="${esc(canonicalUrl)}">
 <meta name="twitter:card" content="summary_large_image">
